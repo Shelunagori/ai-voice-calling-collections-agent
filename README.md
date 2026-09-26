@@ -36,7 +36,7 @@ within deterministic policy constraints, handles interruptions, and produces a f
 | Identity-before-disclosure (name, then date of birth), including **partial DOB** handling | `controller.py`, `nlu_rules.py` |
 | Payment-proposal validation (minimum, ≤ balance, date window, no discounts) | `app/domain/policy.py` |
 | Promise-to-pay only after an explicit "yes" to a read-back that was actually played | `controller.py` |
-| Stop-contact persisted per debtor **and** per contact point; later calls blocked before dialling | `policy.py`, `repository.py` |
+| Stop-contact persisted per debtor **and** per contact point; later calls blocked before dialling (the blocking is verified by automated tests) | `policy.py`, `repository.py` |
 | Barge-in: generation invalidation, TTS cancel, transport clear, measured cancel path | `app/voice/session.py` |
 | English and Japanese (templates, number/date/era parsing, provider language params) | throughout |
 | Audit trail: every policy decision, identity step, barge-in, lifecycle transition | `/sessions` |
@@ -96,7 +96,7 @@ template (or guarded LLM rephrase) → streaming TTS. Details: [docs/ARCHITECTUR
 
 ## Engineering findings from real PSTN tests
 
-**A. Partial date of birth.** On a real call the caller said "Whatever. April. 1988".
+**A. Partial date of birth.** On the first real call the caller said "Whatever. April. 1988".
 - The LLM returned `dob="1988-04"` and schema validation rejected it.
 - The unconstrained fallback parser then read "1988" as a ¥1,988 payment proposal.
 - On another turn the LLM padded "you 1988." to 1988-01-01, which cost the caller a verification attempt.
@@ -104,41 +104,67 @@ template (or guarded LLM rephrase) → streaming TTS. Details: [docs/ARCHITECTUR
   - phase-aware allowed-action contract;
   - an explicit `PARTIAL_DOB` action (year/month/day, never padded);
   - DOB parts must be supported by the transcript;
-  - the fallback parser is constrained to the expected slot;
-  - the agent asks only for the missing part ("And what day in April?").
+  - the fallback parser is constrained to the expected slot.
+- After the fix, a real call answered "April 1988" with "And what day in April?" and verified on the next
+  turn. In another call the caller never gave the day: the parts were kept, noisy STT output ("3030") was
+  treated as unclear, and nothing was disclosed.
 
-**B. Stop-contact scope.** A stop-contact request on Scenario E did not block a later Scenario A call to the
+**B. Identity-before-disclosure on the negative path.** In one real call the caller gave a date of birth
+that did not match the synthetic record, twice. `IDENTITY_ATTEMPT_LIMIT` blocked and the call ended without
+disclosing any account detail.
+- The call also shows a limit of transcript grounding. STT split the year into "19 90"; the rules parser
+  read "19" as the day and discarded the model's year.
+- That reading was safe (nothing was invented, and the caller corrected it) but wrong. It is recorded as an
+  open parser issue.
+
+**C. Stop-contact scope.** A stop-contact request on Scenario E did not block a later Scenario A call to the
 same number. The flag lived on one synthetic account, and every scenario is a different synthetic debtor.
 - The request now applies to the debtor (all accounts) and to the **contact point** (the dialled number).
-- The number is stored only as a salted hash plus a masked label.
+- The number is stored only as a hashed key plus a masked label.
 - The call is blocked before a Twilio call is created.
+- On PSTN, "Please don't call me again" was recognised as `STOP_CONTACT`, acknowledged, and recorded
+  (`stop_contact=true`, `future_contact_eligible=false`). The follow-up blocked call is covered by automated
+  tests; no live export of it is recorded yet.
 
-**C. Voice latency is not consistently under 1.5 s.**
-- On the first PSTN call (7 voice turns, before the fixes above), speech end → first agent audio was
-  **1.47–1.97 s** (median 1.81 s).
-- Stage timings on that call:
+**D. Interruption.** Seven barge-ins were recorded on real calls, all triggered by sustained caller speech
+while the agent was talking. After detection, the runtime invalidated the audio generation and stopped TTS
+in **0.86–1.39 ms**. That is internal cancellation time only. It is not perceived barge-in latency, which
+also includes the VAD's sustained-speech window (default 250 ms), the network, and Twilio's buffer clear.
 
-  | Stage | Time |
+**E. Latency is not consistently under 1.5 s.**
+- Across 31 voice turns on 6 real PSTN calls, speech end → first agent audio had a median of 1.62 s.
+  14 of 31 turns were under 1.5 s, and the range was 1.15–4.67 s.
+- The 4.67 s outlier was a turn where the LLM call failed and the rules fallback answered.
+- Per stage:
+
+  | Stage | Time (31 turns) |
   |---|---|
-  | STT final transcript | ≈320 ms |
-  | End-of-turn commit | ≈290–310 ms (one turn 868 ms) |
-  | Cloudflare NLU | **746–1,262 ms** |
-  | Cartesia first audio | 100–178 ms |
+  | STT final transcript | ≈315–330 ms on most turns |
+  | End-of-turn commit | ≈280–330 ms on most turns |
+  | Cloudflare NLU | 594–1,262 ms (median 905 ms), one 3,876 ms outlier |
+  | Cartesia TTS first audio | 99–178 ms (median 112 ms) |
 
-- The LLM call is the largest and most variable stage; mitigations are listed in
+- NLU is the largest and most variable stage; mitigations are in
   [VOICE_RUNTIME.md](docs/VOICE_RUNTIME.md#latency-budget).
 
 ## Verified end-to-end flows
 
-| Flow | Evidence |
-|---|---|
-| Real PSTN call: name confirmed → partial DOB → DOB verified → disclosure; barge-in events in the audit trail | Session `2fa211b9` (2026-09-26); the regression is replayed by eval cases `pstn_partial_dob*` |
-| Browser and PSTN session audit views (transcript, identity, policy, barge-in, latency) | `/sessions`; tests in `frontend/tests/sessions-page.test.tsx` |
-| Stop-contact on a PSTN call (Scenario E): `stop_contact=true`, `ended_reason=stop_contact_requested` | Owner-reported test, 2026-09-26 |
-| Later call to the same number blocked before dialling (any scenario) | End-to-end tests with a fake Twilio (`tests/test_stop_contact_scope.py`); live re-test pending the debtor/contact-point fix deploy |
-| Promise-to-pay and human transfer | Covered by the browser runtime and the evaluation suite; on PSTN, owner-reported only (no session id recorded here) |
+These are real PSTN calls on the deployed stack (Twilio + Cartesia + Cloudflare), captured as session
+exports. The exports are not committed; [docs/EVIDENCE.md](docs/EVIDENCE.md) lists what each one shows.
 
-Automated: backend 227 tests (PostgreSQL + SQLite), frontend 100 tests, evaluation 32/32 (mock providers).
+| Flow | What the call shows |
+|---|---|
+| Identity verification and promise-to-pay (Scenario A) | The balance was withheld until the DOB was verified, including a partial-DOB step. ¥50,000 due 2026-10-27 passed the minimum, balance and date-window checks. The read-back was played, the caller said "Yes", and the promise was confirmed (`completed_with_promise`). |
+| Stop-contact request (Scenario E) | `STOP_CONTACT` was recognised and acknowledged; `stop_contact=true`, `future_contact_eligible=false`, `ended_reason=stop_contact_requested`. |
+| Failed identity verification | Two mismatched DOBs led to `IDENTITY_ATTEMPT_LIMIT` BLOCK and `identity_verification_failed`, with no disclosure. |
+| Partial-DOB recovery | The agent asked only for the missing parts. The call ended at `NAME_CONFIRMED` with the parts kept and no disclosure. |
+| Barge-in / TTS cancellation | Seven VAD-triggered barge-ins across four calls, each with the interrupted text, the played duration and the cancel timestamps in the audit trail. |
+| Human-transfer request (Scenario G) | Verified PSTN human-transfer request with simulated transfer completion: `caller_requested_human` → `TRANSFER_REQUESTED`, `transfer_status=SIMULATED` (no `TWILIO_TRANSFER_NUMBER` configured). |
+
+- No PSTN evidence is recorded for scenarios B, C, D and F. They are covered by the browser runtime and
+  the evaluation suite.
+- Automated checks: backend 227 tests (PostgreSQL + SQLite), frontend 100 tests, evaluation 32/32 (mock
+  providers).
 
 ## Demo scenarios
 
@@ -183,7 +209,8 @@ Synthetic identities and DOBs are shown on each scenario card. Walkthrough:
 
 - Simulated demo policy, not Japanese legal compliance. No claim of production collections readiness.
 - Human transfer is simulated unless `TWILIO_TRANSFER_NUMBER` is configured.
-- Latency is not consistently below 1.5 s. The measurements are a handful of live turns, not a benchmark.
+- Latency is not consistently below 1.5 s (median 1.62 s over 31 PSTN turns). These are a few calls, not a
+  benchmark.
 - Model and provider choices are tuned for POC cost and speed.
 - Voice activity detection is a simple energy VAD. Background noise in the browser can trigger or delay
   barge-in and turn-taking; headphones help.
@@ -196,12 +223,14 @@ Synthetic identities and DOBs are shown on each scenario card. Walkthrough:
 
 | Measurement | Result | Conditions |
 |---|---|---|
-| PSTN voice turns, speech end → first agent audio | 1.47–1.97 s (median 1.81 s), n=7 | Real call `2fa211b9`, Twilio + Cartesia + Cloudflare, 2026-09-26 |
-| Live browser voice turn, speech end → first audio | ≈1.43 s, n=1 | Deployed backend; the agent's own TTS audio was replayed as the caller |
-| Live TTS time-to-first-audio | 96–140 ms warm, 410 ms cold | n=4, deployed backend |
-| Barge-in cancel path (detect → TTS stopped), in-process | p50 0.27 ms, p95 0.50 ms, n=50 | Mock TTS; excludes network and client buffer flush |
+| PSTN voice turns, speech end → first agent audio | median 1.62 s; 1.15–4.67 s; 14 of 31 under 1.5 s | 31 turns, 6 real calls, 2026-09-26 |
+| PSTN stages | STT final ≈320 ms, NLU median 905 ms, TTS first audio median 112 ms | same 31 turns |
+| PSTN barge-in, internal cancel (detected → TTS stopped) | 0.86–1.39 ms, n=7 | Excludes VAD detection window, network and Twilio buffer clear |
+| Browser voice turn, speech end → first audio | ≈1.43 s, n=1 | Deployed backend; the agent's own TTS audio was replayed as the caller |
+| Barge-in cancel path, in-process | p50 0.27 ms, p95 0.50 ms, n=50 | Mock TTS, dev container |
 | Typed turn → first audio frame | 2–8 ms | Mock providers; pipeline overhead only |
 
+These figures come from a small number of calls from one location; they are not a benchmark.
 `/api/metrics/latency` and the session pages report p50/p95 per provider mode from real sessions.
 
 ## Run locally

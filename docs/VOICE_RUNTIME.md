@@ -107,3 +107,14 @@ before the partial-DOB fix), 7 voice turns, speech end → first agent audio: 14
 1881, 1972 ms (median 1.81 s). Per stage: STT final 317–324 ms; transcript → turn commit 288–311 ms (one
 turn 868 ms); NLU 746–1262 ms; TTS first audio 101–178 ms. The 1.5 s budget is not met consistently; NLU is
 the stage to attack first.
+
+Six real PSTN calls on 2026-09-26 (31 voice turns; see [EVIDENCE.md](EVIDENCE.md)), speech end → first
+agent audio:
+- min 1,146 ms, median 1,623 ms, max 4,673 ms; 14 of 31 turns were under 1.5 s;
+- the maximum is a turn where the LLM failed and the rules fallback answered (NLU 3,876 ms).
+
+Other stages:
+- NLU otherwise 594–1,262 ms;
+- TTS first audio 99–178 ms;
+- barge-in internal cancel 0.86–1.39 ms (n=7). This is detection → TTS stopped, not perceived
+  interruption latency.

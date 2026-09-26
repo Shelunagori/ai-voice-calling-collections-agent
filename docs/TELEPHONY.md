@@ -1,7 +1,7 @@
 # Telephony (Twilio)
 
 Status: **implemented behind `TelephonyProvider`, tested with fakes, and used for real outbound PSTN calls
-on the owner's deployment** (first call 2026-09-26, session `2fa211b9`). Disabled by default (`TELEPHONY_ENABLED=false`); the app boots and the browser demo
+on the owner's deployment** (six recorded calls on 2026-09-26; see [EVIDENCE.md](EVIDENCE.md)). Disabled by default (`TELEPHONY_ENABLED=false`); the app boots and the browser demo
 works without it. While telephony is not active, every `/telephony/*` route returns 404 (and the media
 WebSocket closes), so nothing can be spoofed on a default deployment.
 

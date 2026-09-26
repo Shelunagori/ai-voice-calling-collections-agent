@@ -27,6 +27,10 @@ What I focused on:
 - real failure cases found during PSTN testing, for example a partial date of birth that an unconstrained
   fallback parser read as a payment amount
 
+On real calls it has completed identity verification through to a confirmed promise-to-pay, recorded a
+stop-contact request, ended a failed verification without disclosing anything, and recorded a
+human-transfer request (the transfer itself is simulated in the demo).
+
 It's a synthetic-data POC with simulated policy rules, and latency isn't consistently under 1.5 s yet.
 The README is upfront about both.
 
