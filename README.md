@@ -1,208 +1,282 @@
-# AI Voice Calling Collections Agent
+# AI Voice Collections Agent
+
+A real-time AI voice collections POC that places live PSTN calls, verifies identity, negotiates repayment
+within deterministic policy constraints, handles interruptions, and produces a full audit trail.
+
+**Live demo:** https://ai-voice-calling-collections-agent.vercel.app ·
+**Telephony (Start Call):** https://ai-voice-calling-collections-agent.vercel.app/telephony ·
+**Sessions & audit:** https://ai-voice-calling-collections-agent.vercel.app/sessions ·
+**Backend health:** https://ai-voice-calling-collections-agent-production.up.railway.app/ready
 
 > **Portfolio proof-of-concept.** Synthetic identities and synthetic accounts only. The policy rules are
-> *simulated demo rules inspired by regulated collections workflows* — they are not a statement of Japanese
-> law, have not been reviewed by counsel, are not certified, and this system must not be used to contact
-> real debtors.
+> *simulated demo rules inspired by regulated collections workflows*. They are not a statement of Japanese
+> law, have not been reviewed by counsel and are not certified. Do not use this system to contact real
+> debtors.
 
-## 1. What this demonstrates
+## Why I built this
 
-An engineer-owned, audio-in → audio-out voice agent for collections calls, built around one principle:
+- To practise production-style, real-time voice-agent engineering end to end: telephony, streaming speech,
+  turn-taking, interruption, state control, observability and evaluation.
+- Collections is a good stress test: identity must come before disclosure, payment terms have hard limits,
+  a "yes" has to mean consent, and a stop-contact request must actually stop contact.
+- The architecture deliberately separates **probabilistic language understanding** from **deterministic
+  business authority**.
 
-**Language models handle language. Application code owns authority.**
+## Core capabilities
 
-- A real-time voice runtime: streaming audio, VAD separated from semantic end-of-turn detection,
-  barge-in that cancels agent audio mid-sentence, explicit lifecycle state machine, per-stage latency marks.
-- A deterministic conversation controller and policy engine: identity-before-disclosure, an approved
-  negotiation envelope, promise-to-pay that needs an explicit "yes" to a read-back the caller actually heard,
-  stop-contact, human transfer, calling hours and attempt limits — every decision audited.
-- Provider abstraction: Cloudflare Workers AI (LLM), Cartesia Ink/Sonic (STT/TTS), Twilio Voice + Media
-  Streams (PSTN) — each behind an interface with a deterministic mock, so the whole system runs, and CI passes,
-  with no paid APIs.
-- Evaluation-driven engineering: 30 regression scenarios (EN/JA, typed and synthetic-audio) replayed through
-  the real runtime with authoritative invariants, plus an optional LLM-as-judge.
-- An operations-console UI (Next.js) that a reviewer in Japan can use in a browser, without a phone number.
+**Live on the deployed stack** (Vercel + Railway, real providers):
 
-## 2. Live demo
-
-- Frontend: https://ai-voice-calling-collections-agent.vercel.app/demo
-- Backend health: https://ai-voice-calling-collections-agent-production.up.railway.app/ready
-
-## 3. Architecture
-
-```
- caller ──► transport ──► VAD ──► streaming STT ──► end-of-turn ──► understanding (LLM JSON + rules net)
- (mic/PSTN)  (WS/Twilio)    │                                              │ typed proposal
-    ▲                      ▼ barge-in: gen++ · cancel TTS · clear buffer    ▼
-    │                                                     ConversationController.apply()  ◄──► policy engine
-    │                                                     (authoritative CollectionState)        (audited)
-    │                                                              │ approved facts             │
-    └── transport ◄── paced playback ◄── streaming TTS ◄── realizer + output guard     audit trail / PostgreSQL
-```
-
-More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/VOICE_RUNTIME.md](docs/VOICE_RUNTIME.md) ·
-[docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md) · the in-app `/architecture` page.
-
-## 4. Two-minute reviewer walkthrough
-
-1. Open the demo → **Start browser voice demo**. Pick **English** or **日本語**, scenario **A** (Haruto Sato /
-   佐藤 陽翔), **Start voice session**. Without speech credentials the demo uses typed input (same runtime).
-2. Click the suggested lines: "Yes, this is Haruto" → date of birth (shown on the scenario card) → "I can pay
-   30,000 yen in two weeks" → "Yes". Watch *Collection state*: identity → `VERIFIED`, proposal → read-back →
-   promise `CONFIRMED`; *Policy decisions* shows every check.
-3. **New session**, scenario **C**: ask for 60 days. The policy engine blocks
-   `PAYMENT_DATE_WITHIN_MAX_EXTENSION`; a later "yes" does not create a promise.
-4. Scenario **F**: type while the agent is speaking (or press *Interrupt agent*). The utterance is cut
-   (strike-through), lifecycle shows `AGENT_SPEAKING → INTERRUPTED`, the barge-in pill shows detect→stopped time.
-5. Scenario **D** (wrong party) and **E** (stop-contact) show non-disclosure and stop-contact state.
-6. **Inspect audit trail** after ending; then **Evaluation → Run evaluation suite**.
-
-Full script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
-
-## 5. What is actually implemented
-
-| Area | Status |
+| Capability | Where |
 |---|---|
-| Conversation controller + typed proposals (`Interpretation`/`ProposedAction`) | Implemented, tested |
-| Policy engine (identity, disclosure, min amount, ≤ balance, date window, no discounts, stop-contact, transfer, calling hours, attempt limits, single promise) | Implemented, tested, audited |
-| Country-aware outbound calling window (`POLICY_COUNTRY=JP` → simulated Asia/Tokyo 08:00–21:00; empty/other → `NOT_APPLICABLE`, attempt + stop-contact rules still apply) | Implemented, tested |
-| Promise-to-pay (verified + valid + read-back fully played + explicit yes + policy) | Implemented, tested; DB-unique per session |
-| Output guard (no amounts/debt words before verification; only approved amounts/dates in ¥/円/yen/JPY/spoken forms; no threats/waivers) + LLM rephrasings may not introduce any number absent from the approved template | Implemented, tested |
-| Voice runtime: energy VAD with noise floor, semantic end-of-turn, barge-in, generation-tagged paced playback, lifecycle state machine | Implemented, tested (virtual clock + wall clock) |
-| Latency instrumentation (per-stage marks, p50/p95 by provider mode) | Implemented |
-| English / Japanese (templates, number/date/era parsing, currency formatting, provider language params) | Implemented; **not native-speaker reviewed** |
-| Browser demo: mic via AudioWorklet (when STT configured), typed fallback, live console | Implemented |
-| Cloudflare Workers AI adapter (JSON mode NLU, SSE streaming, timeouts, bounded retries, error classes) | Implemented, contract-tested against a mock transport; JSON-mode NLU **observed working on the deployed backend** (2026-09-26); SSE rephrasing path not exercised live |
-| Cartesia Ink STT / Sonic TTS adapters (WebSocket, cancel on barge-in) | Implemented, contract-tested against local fakes and documented message shapes; **observed working on the deployed backend** (ink-whisper final transcripts, sonic-3 PCM stream) on 2026-09-26 |
-| Twilio: outbound call, signed webhooks, idempotent status callbacks, Media Streams transport, `<Dial>` transfer, hangup | Implemented, tested with fakes; **no real PSTN call has been made** |
-| Persistence (PostgreSQL/SQLite, Alembic), audit trail, transcript retention purge | Implemented, tested on PostgreSQL 16 and SQLite |
-| Observability: JSON logs + correlation ids, Prometheus `/metrics`, `/health`, `/ready` | Implemented |
-| Evaluation harness (30 cases), mock heuristic judge, Cloudflare LLM judge, audio fixture harness | Implemented; LLM judge and STT benchmark **not executed** (no credentials) |
-| Security: operator bearer token, allow-listed dialling, telephony routes absent unless configured, Twilio signature + per-call media token, rate limits (proxy-appended client IP), payload limits, WS origin check, phone-session audit data operator-only | Implemented |
+| Outbound PSTN calls via Twilio REST, started from the web console | `app/api/telephony.py`, `/telephony` |
+| Twilio Media Streams (μ-law 8 kHz ↔ PCM16 16 kHz), signed webhooks, per-call media-stream token | `app/api/telephony.py` |
+| Cartesia Ink (`ink-whisper`) streaming STT and Sonic (`sonic-3`) streaming TTS, cancelled on barge-in | `app/providers/cartesia.py` |
+| Cloudflare Workers AI (`llama-3.3-70b`) JSON-mode NLU, with a deterministic rules parser as fallback and safety net | `app/domain/understanding.py` |
+| Deterministic conversation controller: the only writer of state | `app/domain/controller.py` |
+| Identity-before-disclosure (name, then date of birth), including **partial DOB** handling | `controller.py`, `nlu_rules.py` |
+| Payment-proposal validation (minimum, ≤ balance, date window, no discounts) | `app/domain/policy.py` |
+| Promise-to-pay only after an explicit "yes" to a read-back that was actually played | `controller.py` |
+| Stop-contact persisted per debtor **and** per contact point; later calls blocked before dialling | `policy.py`, `repository.py` |
+| Barge-in: generation invalidation, TTS cancel, transport clear, measured cancel path | `app/voice/session.py` |
+| English and Japanese (templates, number/date/era parsing, provider language params) | throughout |
+| Audit trail: every policy decision, identity step, barge-in, lifecycle transition | `/sessions` |
+| Per-turn latency breakdown (STT final, end-of-turn, NLU, policy, TTS first audio) | `app/voice/latency.py` |
+| Browser voice demo (mic via AudioWorklet, or typed input) on the same runtime | `/demo` |
 
-## 6. What is simulated
+**Simulated / demo-only:**
 
-- **All data**: seven synthetic debtors/accounts (A–G). Phone numbers are in a synthetic range and are never
-  dialled unless an operator adds a number to `DEMO_CALL_ALLOWED_NUMBERS`.
-- **Policy**: demo rules only (see [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md)).
-- **Mock providers** (default): the rules parser is the language layer, mock STT emits scripted transcripts,
-  mock TTS produces near-silent PCM paced like speech (the browser can voice replies locally with the Web Speech
-  API — labelled as a stand-in).
-- **Human transfer** is a deterministic domain state; without Twilio + `TWILIO_TRANSFER_NUMBER` it is recorded
-  as `SIMULATED`.
-- **SMS/e-mail** confirmations go to a mock outbox behind the `Notifier` interface.
+- **Data and policy:** seven synthetic debtors/accounts (A–G) and simulated demo rules (calling window,
+  attempt limit, identity attempts).
+- **Human transfer:** the transfer state is implemented. A live transfer requires `TWILIO_TRANSFER_NUMBER`;
+  without it the transfer is recorded as `SIMULATED`, and the public demo may use simulated transfer.
+- **SMS/e-mail promise confirmation:** goes to a mock outbox behind the `Notifier` interface.
+- **Evaluation suite (32 scenarios):** runs on mock providers and a virtual clock. The LLM-as-judge is
+  optional and has not been run with credentials.
 
-## 7. Optional external providers
+## Architecture
 
-| Provider | Enables | Variables |
+```mermaid
+flowchart TD
+    R[Operator / reviewer browser] --> V[Next.js on Vercel<br/>server routes hold OPERATOR_TOKEN]
+    V --> B[FastAPI on Railway]
+    B --> C[Deterministic controller + policy engine]
+    B -->|Twilio REST| T[Outbound PSTN call]
+    T <-->|Media Streams| B
+    B --> STT[Cartesia Ink STT]
+    STT --> NLU[Cloudflare Workers AI NLU<br/>typed proposals only]
+    NLU --> C
+    C --> TTS[Cartesia Sonic TTS]
+    TTS -->|audio playback| T
+    B --> DB[(PostgreSQL<br/>sessions · transcripts · policy decisions<br/>promises · latency · contact suppression)]
+```
+
+One caller turn: audio → VAD + streaming STT → end-of-turn → LLM interpretation into a typed proposal
+(no side effects) → `ConversationController.apply()` runs the policy checks and changes state →
+template (or guarded LLM rephrase) → streaming TTS. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
+[docs/VOICE_RUNTIME.md](docs/VOICE_RUNTIME.md) · [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md).
+
+## Design principle: the language model handles language; the application owns authority
+
+- **The LLM interprets.** It returns typed actions (`PROPOSE_PAYMENT`, `PROVIDE_DOB`, `PARTIAL_DOB`,
+  `STOP_CONTACT`, …) validated by a strict schema (`app/domain/commands.py`). No action can set identity,
+  disclosure, promise or transfer state.
+- **The controller decides what is valid now.** Each phase has an allowed-action contract
+  (`app/domain/turn_context.py`). While a date of birth is expected, a payment proposal is dropped and
+  audited as `nlu.action_out_of_phase`.
+- **The policy layer decides what is allowed.** Every check is a `PolicyDecision` in the audit log:
+  `IDENTITY_REQUIRED_BEFORE_DISCLOSURE`, `PAYMENT_DATE_WITHIN_MAX_EXTENSION`, `STOP_CONTACT_BLOCKS_CONTACT`, …
+- **So the LLM cannot:**
+  - disclose the balance before verification (the output guard also blocks numbers and debt words);
+  - accept a 60-day extension when policy allows 14;
+  - confirm a promise without a heard read-back;
+  - skip a stop-contact request (the rules parser detects caller-rights intents independently);
+  - start a transfer on its own.
+- **Guarded rephrasing.** Replies come from templates by default. An optional LLM rephrasing may not
+  introduce any number that is absent from the approved template.
+
+## Engineering findings from real PSTN tests
+
+**A. Partial date of birth.** On a real call the caller said "Whatever. April. 1988".
+- The LLM returned `dob="1988-04"` and schema validation rejected it.
+- The unconstrained fallback parser then read "1988" as a ¥1,988 payment proposal.
+- On another turn the LLM padded "you 1988." to 1988-01-01, which cost the caller a verification attempt.
+- Fixes:
+  - phase-aware allowed-action contract;
+  - an explicit `PARTIAL_DOB` action (year/month/day, never padded);
+  - DOB parts must be supported by the transcript;
+  - the fallback parser is constrained to the expected slot;
+  - the agent asks only for the missing part ("And what day in April?").
+
+**B. Stop-contact scope.** A stop-contact request on Scenario E did not block a later Scenario A call to the
+same number. The flag lived on one synthetic account, and every scenario is a different synthetic debtor.
+- The request now applies to the debtor (all accounts) and to the **contact point** (the dialled number).
+- The number is stored only as a salted hash plus a masked label.
+- The call is blocked before a Twilio call is created.
+
+**C. Voice latency is not consistently under 1.5 s.**
+- On the first PSTN call (7 voice turns, before the fixes above), speech end → first agent audio was
+  **1.47–1.97 s** (median 1.81 s).
+- Stage timings on that call:
+
+  | Stage | Time |
+  |---|---|
+  | STT final transcript | ≈320 ms |
+  | End-of-turn commit | ≈290–310 ms (one turn 868 ms) |
+  | Cloudflare NLU | **746–1,262 ms** |
+  | Cartesia first audio | 100–178 ms |
+
+- The LLM call is the largest and most variable stage; mitigations are listed in
+  [VOICE_RUNTIME.md](docs/VOICE_RUNTIME.md#latency-budget).
+
+## Verified end-to-end flows
+
+| Flow | Evidence |
+|---|---|
+| Real PSTN call: name confirmed → partial DOB → DOB verified → disclosure; barge-in events in the audit trail | Session `2fa211b9` (2026-09-26); the regression is replayed by eval cases `pstn_partial_dob*` |
+| Browser and PSTN session audit views (transcript, identity, policy, barge-in, latency) | `/sessions`; tests in `frontend/tests/sessions-page.test.tsx` |
+| Stop-contact on a PSTN call (Scenario E): `stop_contact=true`, `ended_reason=stop_contact_requested` | Owner-reported test, 2026-09-26 |
+| Later call to the same number blocked before dialling (any scenario) | End-to-end tests with a fake Twilio (`tests/test_stop_contact_scope.py`); live re-test pending the debtor/contact-point fix deploy |
+| Promise-to-pay and human transfer | Covered by the browser runtime and the evaluation suite; on PSTN, owner-reported only (no session id recorded here) |
+
+Automated: backend 227 tests (PostgreSQL + SQLite), frontend 100 tests, evaluation 32/32 (mock providers).
+
+## Demo scenarios
+
+| Scenario | Behaviour under test | Key invariant |
 |---|---|---|
-| Cloudflare Workers AI | LLM understanding, optional LLM phrasing, LLM-as-judge | `LLM_PROVIDER=cloudflare`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_AI_MODEL` |
-| Cartesia | Browser microphone (STT) and real speech (TTS), EN + JA | `STT_PROVIDER=cartesia`, `TTS_PROVIDER=cartesia`, `CARTESIA_API_KEY`, `CARTESIA_VOICE_ID`, `CARTESIA_VOICE_ID_JA` |
-| Twilio | Real phone calls | `TELEPHONY_ENABLED=true`, `TWILIO_*`, `OPERATOR_TOKEN`, `DEMO_CALL_ALLOWED_NUMBERS` |
+| A Cooperative payer | Successful promise-to-pay (¥30,000) | Amount and date stay inside the approved envelope |
+| B Cannot pay in full | Negotiation within limits | Nothing below the minimum or beyond the window is accepted |
+| C Extension beyond policy | 60-day request vs 14-day limit | The promise is never confirmed |
+| D Wrong party | Identity / privacy | No debt disclosure |
+| E Stop contact | Contact suppression | Future calls to that debtor and number are blocked |
+| F Barge-in | Voice runtime | Playback is cancelled; the new turn is handled |
+| G Human transfer | Escalation | Deterministic transfer state (simulated without a transfer number) |
 
-Missing credentials degrade to mocks; the app never crashes for lack of a key. Full reference: [.env.example](.env.example).
+Synthetic identities and DOBs are shown on each scenario card. Walkthrough:
+[docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
-## 8. Evaluation methodology
+## Security and privacy
 
-- `python -m app.evaluation` replays 30 scripted callers through the **real** `VoiceSession` + controller +
-  policy on a **virtual clock** with mock providers. Every case checks universal safety invariants
-  (no amounts before verification, promise preconditions, single promise, stop-contact consistency, no stale
-  audio after barge-in, ordered barge-in timestamps, clean termination) plus case expectations.
-- Categories: identity, wrong party, failed verification, promise, partial payment, invalid extension,
-  below-minimum, discount, prompt injection, hallucinated LLM terms, invalid LLM JSON, stop-contact
-  (verified/unverified), transfer, typed and audio barge-in, "yes" over an unfinished read-back, ambiguity,
-  amount/date correction, hang-up mid-confirmation, Japanese flows, noisy audio, thinking pause, short answer,
-  silence timeout.
-- Judge scores (mock heuristic in CI; Cloudflare LLM judge opt-in) are **supplementary** and never override
-  invariants. Details: [docs/EVALUATION.md](docs/EVALUATION.md).
+- **`OPERATOR_TOKEN` is server-only.**
+  - Two Next.js route handlers add it for phone-session detail and Start Call.
+  - The browser never sends, receives or stores it.
+  - A CI step builds with a canary token and scans the client bundle.
+- **Railway stays authenticated.** `/api/operator/calls` and phone-session detail reject requests without
+  the bearer token.
+- **Start Call guards:**
+  - same-origin JSON only;
+  - fields validated (E.164, scenario, language);
+  - duplicate-call and rate guards;
+  - the backend's allowlist (`DEMO_CALL_ALLOWED_NUMBERS`), hourly limit and contact policy decide.
+- **Twilio:** webhook signatures are validated; the media WebSocket requires a per-call HMAC token;
+  telephony routes return 404 unless telephony is configured.
+- **Contact numbers** where someone asked to stop are stored as a SHA-256 key with a fixed application salt
+  plus a masked label (`+81•••••••678`), not in clear. This is pseudonymisation, not strong protection:
+  phone numbers are guessable.
+- **Data:** synthetic only. Transcript text expires after `TRANSCRIPT_RETENTION_DAYS` (default 30); raw
+  audio is never stored. JSON logs redact token-like values.
+- **POC access model:** the public console has no login, so anyone with the URL can view audit detail and
+  call allowlisted numbers. A production deployment needs real access control, for example SSO or Vercel
+  Deployment Protection (see DECISIONS.md D14).
 
-Latest local result (this commit, mock providers): **30/30 cases pass**; VAD signal fixtures **6/6**.
+## Known limitations
 
-## 9. Measured latency
+- Simulated demo policy, not Japanese legal compliance. No claim of production collections readiness.
+- Human transfer is simulated unless `TWILIO_TRANSFER_NUMBER` is configured.
+- Latency is not consistently below 1.5 s. The measurements are a handful of live turns, not a benchmark.
+- Model and provider choices are tuned for POC cost and speed.
+- Voice activity detection is a simple energy VAD. Background noise in the browser can trigger or delay
+  barge-in and turn-taking; headphones help.
+- Demo rate limits and the allowlist are intentionally restrictive; the in-process session state requires a
+  single replica.
+- Japanese has not been reviewed by a native speaker. No post-training has been done
+  ([plan](docs/POST_TRAINING_PLAN.md)).
 
-What has actually been measured, and on what:
+## Measured latency (detail)
 
 | Measurement | Result | Conditions |
 |---|---|---|
-| Barge-in cancel path (detect → TTS task stopped → transport cleared), in-process | p50 0.27 ms, p95 0.50 ms, n=50 | wall clock, mock TTS, dev container; excludes network and client buffer flush |
-| Typed turn → first audio frame sent | 2–8 ms | mock providers (rules NLU, template realizer, mock TTS); pipeline overhead only |
-| Voice short answer ("yes"): speech end → turn commit | ≈260 ms | virtual clock; VAD hang (240 ms) + quick end-of-turn rule |
-| **Live** voice turn, speech end → first agent audio | **≈1.43 s** (STT final 312 ms + end-of-turn wait 297 ms + Cloudflare NLU 727 ms + policy <1 ms + Cartesia TTS first audio 96 ms) | **n=1**, deployed Railway backend, real Cartesia ink-whisper / sonic-3 + Cloudflare llama-3.3-70b, 2026-09-26; the "caller" audio was the agent's own TTS greeting streamed back as microphone input, not a human voice |
-| **Live** typed turn → first agent audio | 873 ms (NLU 767 ms, TTS first audio 105 ms) | n=1, same deployment |
-| **Live** TTS time-to-first-audio | 410 ms on a cold connection, 96–140 ms warm | n=4, same deployment |
+| PSTN voice turns, speech end → first agent audio | 1.47–1.97 s (median 1.81 s), n=7 | Real call `2fa211b9`, Twilio + Cartesia + Cloudflare, 2026-09-26 |
+| Live browser voice turn, speech end → first audio | ≈1.43 s, n=1 | Deployed backend; the agent's own TTS audio was replayed as the caller |
+| Live TTS time-to-first-audio | 96–140 ms warm, 410 ms cold | n=4, deployed backend |
+| Barge-in cancel path (detect → TTS stopped), in-process | p50 0.27 ms, p95 0.50 ms, n=50 | Mock TTS; excludes network and client buffer flush |
+| Typed turn → first audio frame | 2–8 ms | Mock providers; pipeline overhead only |
 
-These live figures are single samples from one location, not p50/p95; they show the pipeline works end
-to end and where the time goes (LLM understanding is the largest stage). The UI and
-`/api/metrics/latency` report p50/p95 per provider mode from real sessions; mock-mode figures are labelled
-as pipeline-only. Expected bottlenecks and the budget are discussed in
-[docs/VOICE_RUNTIME.md](docs/VOICE_RUNTIME.md#latency-budget).
+`/api/metrics/latency` and the session pages report p50/p95 per provider mode from real sessions.
 
-## 10. Limitations
+## Run locally
 
-- Live provider checks so far are a handful of manual WebSocket probes against the deployed backend
-  (Cartesia STT/TTS, Cloudflare NLU) and one real PSTN call placed by the owner (2026-09-26), which exposed
-  the partial-DOB bug fixed by the allowed-action contract; no automated live benchmark.
-- Energy VAD is a deliberately simple, dependency-free baseline; production would use a model VAD and the
-  provider's endpointing, tuned on labelled call audio.
-- The rules parser covers common EN/JA phrasings; free-form speech needs the LLM path.
-- Japanese output has not been validated by a native speaker; multilingual support is technical, and
-  native-quality review is a separate production requirement.
-- Single-process session state (WebSockets are stateful): run one replica, or add sticky routing + a shared
-  store before scaling out. Rate limiting is in-process.
-- Human transfer to a live agent needs a Twilio number; browser sessions simulate it.
-- No production post-training has been performed ([plan](docs/POST_TRAINING_PLAN.md)).
-
-## 11. Local setup
-
-Requirements: Python 3.12+, Node 22+. No API keys, no database server needed.
+Requirements: Python 3.12+, Node 22+. No API keys and no database server are needed (SQLite and mock
+providers).
 
 ```bash
-# backend (SQLite file DB, mock providers)
-cd backend
-python3.12 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+cd backend && python3.12 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
 uvicorn app.main:_app_factory --factory --reload --port 8000
 
-# frontend
-cd frontend
-npm ci
+cd frontend && npm ci
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev   # http://localhost:3000
 ```
 
 Full stack with PostgreSQL: `docker compose up --build`.
 
-Checks: `cd backend && ruff check app tests alembic && mypy app && pytest -q && python -m app.evaluation`
-· `cd frontend && npm run lint && npm run typecheck && npm test && npm run build`.
+Checks:
 
-## 12. Deployment
+- **Backend:** `ruff check app tests alembic && mypy app && pytest -q && python -m app.evaluation`
+- **Frontend:** `npm run lint && npm run typecheck && npm test && npm run check:bundle`
 
-Railway (backend + PostgreSQL) and Railway or Vercel (frontend). Everything is prepared — Dockerfiles,
-`railway.json`, `/ready` health check, `PORT` handling, migrations on start, graceful shutdown. The live
-instance was deployed by the repository owner; the assistant that wrote this code has not deployed it.
-Phone-session audit detail and the **Telephony → Start Call** page need the server-only `OPERATOR_TOKEN` on
-the frontend (see DEPLOYMENT.md); there is no browser login and the token never reaches the browser. Step-by-step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-Telephony setup: [docs/TELEPHONY.md](docs/TELEPHONY.md).
+## Deployment configuration
 
-## 13. Project structure
+Every variable is documented in [.env.example](.env.example); step-by-step in
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/TELEPHONY.md](docs/TELEPHONY.md).
+
+**Backend (Railway)**
+
+- `APP_ENV=production`, `DATABASE_URL`, and `FRONTEND_URL` set to the exact Vercel origin.
+- Providers:
+  - `LLM_PROVIDER=cloudflare` with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`;
+  - `STT_PROVIDER=cartesia` and `TTS_PROVIDER=cartesia` with `CARTESIA_API_KEY`, `CARTESIA_VOICE_ID` and
+    `CARTESIA_VOICE_ID_JA`.
+- Telephony: `TELEPHONY_ENABLED=true`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`,
+  `TWILIO_WEBHOOK_BASE_URL`, `DEMO_CALL_ALLOWED_NUMBERS`, `OPERATOR_TOKEN`, and optionally
+  `TWILIO_TRANSFER_NUMBER`.
+- Policy: `POLICY_COUNTRY`, `POLICY_TIMEZONE`, `POLICY_CALLING_START_HOUR`, `POLICY_CALLING_END_HOUR`.
+
+**Frontend (Vercel)**
+
+- `NEXT_PUBLIC_API_BASE_URL` (public; the backend URL).
+- `OPERATOR_TOKEN` (server-only; same value as Railway, never `NEXT_PUBLIC_`).
+- Optionally `BACKEND_API_BASE_URL`.
+
+**Twilio**
+
+- `TWILIO_WEBHOOK_BASE_URL` must equal the public backend URL exactly, because signatures depend on it.
+- Outbound calls get their voice and status callbacks automatically.
+- For inbound calls, point the number's Voice webhook to `POST {base}/telephony/twilio/voice`.
+- Trial accounts can only call verified numbers.
+
+## Project structure
 
 ```
-backend/
-  app/domain/        controller, policy engine, typed commands, rules NLU, responses + guard, scenarios, audit
-  app/voice/         session runtime, VAD, end-of-turn, lifecycle, latency, audio utils
-  app/providers/     interfaces, mocks, Cloudflare, Cartesia, Twilio, factory
-  app/api/           REST, browser WebSocket, telephony webhooks + media stream, evaluation API
-  app/persistence/   schema, repository, DB recorder      alembic/  migrations
-  app/evaluation/    cases, runner, judges, audio benchmark
-  tests/             unit, policy, state machine, API, provider contracts, persistence, runtime
-frontend/            Next.js console: /, /demo, /architecture, /evaluation, /sessions, /telephony
-docs/                architecture, runtime, policy, evaluation, telephony, deployment, post-training, decisions
+backend/app/domain/       controller, policy, allowed-action contract, typed commands, rules NLU, responses + guard
+backend/app/voice/        session runtime, VAD, end-of-turn, lifecycle, latency
+backend/app/providers/    interfaces, mocks, Cloudflare, Cartesia, Twilio
+backend/app/api/          REST, browser WebSocket, Twilio webhooks + media stream
+backend/app/persistence/  schema, repository, DB recorder        backend/alembic/  migrations
+backend/app/evaluation/   32 scenario cases, runner, judges
+frontend/                 Next.js console: /demo, /telephony, /sessions, /evaluation, /architecture
+docs/                     architecture, voice runtime, policy, evaluation, telephony, deployment, decisions
 ```
 
-## Implemented vs planned / production evolution
+**Not built (production evolution):**
 
-**Implemented** is everything in §5 marked implemented. **Planned / production evolution** (not built):
-model-based VAD and semantic turn models; real-provider latency benchmarking and tuning; streaming LLM →
-sentence-level TTS; Redis-backed session routing and rate limits for multiple replicas; live Twilio transfer
-queue with warm hand-off context; SMS/e-mail providers; consent capture and recording disclosures reviewed by
-counsel; native-speaker review of Japanese; production post-training loop per
-[docs/POST_TRAINING_PLAN.md](docs/POST_TRAINING_PLAN.md).
+- model-based VAD and turn detection;
+- streaming LLM → sentence-level TTS;
+- a live benchmark with p95 targets;
+- Redis-backed sessions for multiple replicas;
+- warm human hand-off;
+- real SMS/e-mail providers;
+- counsel-reviewed consent and recording disclosures;
+- native-speaker review;
+- post-training ([plan](docs/POST_TRAINING_PLAN.md)).
+
+Design decisions and trade-offs: [docs/DECISIONS.md](docs/DECISIONS.md).
