@@ -114,7 +114,8 @@ def test_ws_origin_enforced_in_production(tmp_path):
     from starlette.websockets import WebSocketDisconnect
 
     s = settings_for_tests(app_env="production", frontend_url="https://ai-voice-calling-collections-agent.vercel.app",
-                           database_url=f"sqlite+aiosqlite:///{tmp_path}/o.db")  # fmt: skip
+                           database_url=f"sqlite+aiosqlite:///{tmp_path}/o.db",
+                           allow_ephemeral_database=True)  # fmt: skip  # production-on-SQLite now needs the escape hatch
     with TestClient(create_app(s)) as c:
         with (
             pytest.raises(WebSocketDisconnect),
