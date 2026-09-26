@@ -8,7 +8,7 @@ const LINKS = [
   { href: "/architecture", label: "Architecture" },
   { href: "/evaluation", label: "Evaluation" },
   { href: "/sessions", label: "Sessions & audit" },
-  { href: "/operator", label: "Telephony" },
+  { href: "/telephony", label: "Telephony" },
 ];
 
 export function Nav() {

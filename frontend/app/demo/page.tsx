@@ -152,6 +152,9 @@ export default function DemoPage() {
                 Typed input
               </button>
             </div>
+            {mode === "voice" && cap?.browser_voice_available && (
+              <p className="small muted">For best barge-in and speech recognition results, use headphones and a quiet environment.</p>
+            )}
             {!cap?.browser_voice_available && (
               <p className="small muted">
                 Speech recognition credentials are not configured on this deployment, so the demo uses typed input with the same runtime (turn-taking, barge-in, policy,

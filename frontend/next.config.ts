@@ -4,6 +4,9 @@ const config: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  async redirects() {
+    return [{ source: "/operator", destination: "/telephony", permanent: false }];
+  },
   async headers() {
     return [
       {
