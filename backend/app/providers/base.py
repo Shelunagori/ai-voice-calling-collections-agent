@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -82,7 +82,7 @@ class TTSProvider(Protocol):
     model: str
     sample_rate: int
 
-    def synthesize(self, text: str, language: str, *, context_id: str) -> AsyncIterator[bytes]:
+    def synthesize(self, text: str, language: str, *, context_id: str) -> AsyncGenerator[bytes, None]:
         """Yield raw PCM16 mono chunks. Cancelling the consumer cancels generation."""
 
 

@@ -10,7 +10,7 @@ import asyncio
 import json
 import re
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import date
 from typing import Any
 
@@ -189,7 +189,7 @@ class MockTTS:
         self.requests: list[dict[str, Any]] = []
         self.cancelled: list[str] = []
 
-    async def synthesize(self, text: str, language: str, *, context_id: str) -> AsyncIterator[bytes]:
+    async def synthesize(self, text: str, language: str, *, context_id: str) -> AsyncGenerator[bytes, None]:
         self.requests.append({"text": text, "language": language, "context_id": context_id})
         seconds = max(0.4, len(text) / self.cps.get(language, 12.0))
         chunk = int(self.sample_rate * 0.02) * 2
