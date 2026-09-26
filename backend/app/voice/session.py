@@ -180,6 +180,9 @@ class VoiceSession:
         self._listening_since = self._mono()
         self._started_at = self._mono()
         self._pending_text: str | None = None
+        self._first_audio_logged = False
+        self._first_partial_logged = False
+        self._first_final_logged = False
         self._stt_reopens = 0
         self._bg: set[asyncio.Task[Any]] = set()
         self.ended = asyncio.Event()
@@ -226,9 +229,25 @@ class VoiceSession:
     def _emit_state(self) -> None:
         self.emit("state", {"collection": self.c.state.snapshot(), "voice_state": self.state.value})
 
+    def _log(self, event: str, level: int = logging.INFO, **fields: Any) -> None:
+        """Structured milestone log. Never includes audio bytes or transcript text."""
+        log.log(
+            level,
+            f"voice.{event}",
+            extra={
+                "voice_event": event,
+                "session_id": str(self.c.state.session_id),
+                "channel": self.c.state.channel.value,
+                **fields,
+            },
+        )
+
     # ------------------------------------------------------------------ lifecycle
     async def start(self, run_background: bool = True) -> None:
         self._sender = asyncio.create_task(self._send_loop())
+        self._log(
+            "session_started", input_mode=self.input_mode, language=self.c.lang.value, providers=self.d.provider_labels
+        )
         self.c.audit.record(
             AuditType.CALL_STARTED,
             0,
@@ -240,9 +259,15 @@ class VoiceSession:
             try:
                 self._stt_stream = await self.d.stt.open_stream(self.c.lang.value, self.cfg.sample_rate)
                 self._stt_task = asyncio.create_task(self._stt_loop(self._stt_stream))
+                self._log(
+                    "stt_stream_ready",
+                    provider=self.d.provider_labels.get("stt", "?"),
+                    sample_rate=self.cfg.sample_rate,
+                )
             except ProviderError as e:
                 self._provider_failure("stt", e)
                 self.input_mode = "text"
+                self.emit("input_mode", {"input_mode": "text", "reason": "speech recognition unavailable"})
         if run_background:
             self._ticker = asyncio.create_task(self._tick_loop())
         self.lifecycle.to(VoiceState.PROCESSING, "session_start")
@@ -283,6 +308,14 @@ class VoiceSession:
             await asyncio.wait(bg, timeout=2.0)
         self._emit_state()
         self.emit("session.ended", {"reason": reason, "summary": self.summary()})
+        self._log(
+            "session_ended",
+            reason=reason,
+            call_status=self.c.state.call_status.value,
+            turns=len(self.turns),
+            barge_ins=len(self.barge_ins),
+            errors=len(self.errors),
+        )
         self._outq.put_nowait(None)
         if self._sender:
             with contextlib.suppress(Exception):
@@ -305,6 +338,9 @@ class VoiceSession:
     async def on_audio(self, pcm16: bytes) -> None:
         if self.lifecycle.terminal:
             return
+        if not self._first_audio_logged:
+            self._first_audio_logged = True
+            self._log("first_audio_frame", bytes=len(pcm16), stt_attached=self._stt_stream is not None)
         if self._stt_stream is not None:
             try:
                 await self._stt_stream.send_audio(pcm16)
@@ -357,6 +393,9 @@ class VoiceSession:
         try:
             async for ev in stream.events():
                 if ev.type == STTEventType.PARTIAL:
+                    if not self._first_partial_logged:
+                        self._first_partial_logged = True
+                        self._log("first_partial_transcript", chars=len(ev.text))
                     self._partial = ev.text
                     self.emit("transcript.partial", {"text": ev.text})
                     if (
@@ -368,6 +407,9 @@ class VoiceSession:
                         await self.barge_in("stt_partial")
                 elif ev.type == STTEventType.FINAL:
                     text = ev.text.strip()
+                    if text and not self._first_final_logged:
+                        self._first_final_logged = True
+                        self._log("first_final_transcript", chars=len(text), state=self.state.value)
                     if self.state == VoiceState.PROCESSING:
                         # Late final for a turn that was already committed: never leak it forward.
                         if text:
@@ -640,6 +682,7 @@ class VoiceSession:
 
     async def _play(self, pb: _Playback, lat: TurnLatency) -> None:
         lat.mark("tts_request", self._mono())
+        self._log("tts_started", generation=pb.generation, chars=len(pb.text), turn_index=self.c.turn_index)
         sr = self.d.tts.sample_rate
         ctx = f"{self.c.state.session_id}:{pb.generation}"
         # aclosing(): when playback is cancelled (barge-in) the provider generator is
@@ -649,6 +692,12 @@ class VoiceSession:
                 if pb.generation != self.gen:
                     return  # stale generation: never send
                 now = self._mono()
+                if "tts_first_audio" not in lat.marks:
+                    self._log(
+                        "first_tts_audio",
+                        generation=pb.generation,
+                        ms_after_request=round((now - lat.marks["tts_request"]) * 1000, 1),
+                    )
                 lat.mark("tts_first_audio", now)
                 if pb.started_at is None:
                     pb.started_at = now
@@ -750,6 +799,7 @@ class VoiceSession:
     def _provider_failure(self, provider: str, e: BaseException) -> None:
         msg = str(e)[:200]
         self.errors.append(f"{provider}: {msg}")
+        self._log("provider_error", logging.WARNING, provider=provider, error_type=type(e).__name__, error=msg)
         self.c.audit.record(AuditType.PROVIDER_FAILURE, self.c.turn_index, provider=provider, error=msg)
         self.emit("error", {"provider": provider, "message": msg, "degraded": True})
 

@@ -223,6 +223,7 @@ class CartesiaTTS:
         started = time.monotonic()
         first = True
         done = False
+        carry = b""
         try:
             await ws.send(json.dumps(self.request(text, language, context_id)))
             while True:
@@ -232,6 +233,13 @@ class CartesiaTTS:
                     raise ProviderError("cartesia_tts", ErrorKind.TIMEOUT, "no audio from TTS") from e
                 t = msg.get("type")
                 if t == "chunk" and msg.get("data"):
+                    # Chunk sizes are not documented as sample-aligned: carry an odd trailing
+                    # byte into the next chunk so consumers only ever see whole PCM16 samples.
+                    raw = carry + base64.b64decode(msg["data"])
+                    cut = len(raw) - (len(raw) % 2)
+                    carry = raw[cut:]
+                    if not cut:
+                        continue
                     if first:
                         metrics.observe(
                             "provider_latency_ms",
@@ -239,7 +247,7 @@ class CartesiaTTS:
                             {"provider": "cartesia_tts", "op": "first_audio"},
                         )
                         first = False
-                    yield base64.b64decode(msg["data"])
+                    yield raw[:cut]
                 elif t == "done" or msg.get("done") is True:
                     done = True
                     return

@@ -266,3 +266,34 @@ async def test_live_cloudflare_nlu():
         "Return JSON actions for the caller utterance.", "yes that's me", interpretation_json_schema(), timeout=10
     )
     assert "actions" in out
+
+
+async def test_cartesia_stt_documented_message_shapes():
+    """Fixture from the documented Realtime STT schema (2026-08-14): transcript chunks carry
+    request_id/duration/words; finalize is acknowledged with flush_done; errors carry
+    status_code/title/message/error_code; close -> done."""
+    fixture = [
+        {"type": "transcript", "is_final": True, "request_id": "r1", "text": "Hello,", "duration": 0.6,
+         "words": [{"word": "Hello,", "start": 0.0, "end": 0.5}]},
+        {"type": "flush_done", "request_id": "r1"},
+        {"type": "error", "status_code": 400, "title": "Bad audio", "message": "unsupported encoding",
+         "error_code": "invalid_audio"},
+        {"type": "done", "request_id": "r1"},
+    ]  # fmt: skip
+
+    async def handler(ws):
+        await ws.recv()  # first audio chunk
+        for m in fixture:
+            await ws.send(json.dumps(m))
+
+    server, url = await _serve(handler)
+    try:
+        stream = await CartesiaSTT("k", "ink-whisper", "2026-08-14", url=url).open_stream("en", 16000)
+        await stream.send_audio(b"\x00" * 640)
+        evs = [e async for e in stream.events()]
+        kinds = [e.type for e in evs]
+        assert kinds == [STTEventType.FINAL, STTEventType.ERROR, STTEventType.CLOSED]
+        assert evs[0].text == "Hello," and evs[0].words[0]["word"] == "Hello,"
+        assert evs[1].error == "unsupported encoding"
+    finally:
+        server.close()
