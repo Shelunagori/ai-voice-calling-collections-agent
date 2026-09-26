@@ -67,6 +67,13 @@ raw number alone was rejected because unrelated debtors can share a number; bloc
 not have covered the observed case. Limitation: existing contact points cannot be backfilled (numbers were
 never stored), so flags recorded before migration 0002 apply at debtor level only.
 
+**D17 — Production refuses a non-durable database.** Found on Railway: `DATABASE_URL` was empty, so the
+backend silently ran on the container's SQLite file and lost every session on redeploy. With
+`APP_ENV=production/staging` (Railway environment variables as a safety net) startup now fails unless the
+database is PostgreSQL. Failing was chosen over a warning because a failed health check keeps the previous
+deployment serving, whereas a warning would still lose data. `ALLOW_EPHEMERAL_DATABASE=true` remains an
+emergency/dev escape hatch (off by default, logged CRITICAL).
+
 **D12 — Evaluation on a virtual clock.** Makes the suite deterministic and fast; wall-clock behaviour is
 covered separately (`tests/test_wallclock_barge_in.py`). Latency numbers from the suite are labelled as
 virtual/pipeline-only.

@@ -163,7 +163,7 @@ exports. The exports are not committed; [docs/EVIDENCE.md](docs/EVIDENCE.md) lis
 
 - No PSTN evidence is recorded for scenarios B, C, D and F. They are covered by the browser runtime and
   the evaluation suite.
-- Automated checks: backend 227 tests (PostgreSQL + SQLite), frontend 100 tests, evaluation 32/32 (mock
+- Automated checks: backend 239 tests (PostgreSQL + SQLite), frontend 100 tests, evaluation 32/32 (mock
   providers).
 
 ## Demo scenarios
@@ -235,8 +235,8 @@ These figures come from a small number of calls from one location; they are not 
 
 ## Run locally
 
-Requirements: Python 3.12+, Node 22+. No API keys and no database server are needed (SQLite and mock
-providers).
+Requirements: Python 3.12+, Node 22+. No API keys and no database server are needed: SQLite and mock
+providers, for development only.
 
 ```bash
 cd backend && python3.12 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
@@ -260,7 +260,12 @@ Every variable is documented in [.env.example](.env.example); step-by-step in
 
 **Backend (Railway)**
 
-- `APP_ENV=production`, `DATABASE_URL`, and `FRONTEND_URL` set to the exact Vercel origin.
+- `APP_ENV=production`, `FRONTEND_URL` set to the exact Vercel origin, and
+  `DATABASE_URL=${{Postgres.DATABASE_URL}}` from a Railway PostgreSQL service.
+- **Durable persistence:** the backend uses PostgreSQL for sessions, transcripts, audit, latency,
+  promises and stop-contact suppression, so they survive redeploys. The SQLite fallback is development-only.
+  Production/staging refuse to start without PostgreSQL; `ALLOW_EPHEMERAL_DATABASE` is an emergency override,
+  not for normal use. `/ready` reports `backend`, `durable` and the migration `revision`.
 - Providers:
   - `LLM_PROVIDER=cloudflare` with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`;
   - `STT_PROVIDER=cartesia` and `TTS_PROVIDER=cartesia` with `CARTESIA_API_KEY`, `CARTESIA_VOICE_ID` and

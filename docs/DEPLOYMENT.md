@@ -9,12 +9,48 @@ the CI `docker` job builds and smoke-tests them.
 
 1. Railway → New Project → Deploy from GitHub repo → select this repo. Set the service **Root Directory** to
    `backend` (uses `backend/Dockerfile` and `backend/railway.json`).
-2. Add a **PostgreSQL** plugin. On the backend service set `DATABASE_URL=${{Postgres.DATABASE_URL}}`
-   (`postgres://` URLs are normalised to `postgresql+asyncpg://`).
+2. Add a **PostgreSQL** service. On the backend service set `DATABASE_URL=${{Postgres.DATABASE_URL}}`
+   (`Postgres` is the database service's name in Railway; `postgres://` URLs are normalised to
+   `postgresql+asyncpg://`, and `sslmode=` is translated for asyncpg).
 3. Variables (minimum for a mock-provider public demo):
    `APP_ENV=production`, `FRONTEND_URL=https://<frontend-domain>`.
    Railway provides `PORT`; the container listens on it. Migrations run on start (`AUTO_MIGRATE=true`);
-   seed data is upserted idempotently.
+   seed data is upserted idempotently, and existing flags are not reset.
+
+**Durable persistence is required in production.** With `APP_ENV=production` or `staging`, or when Railway
+environment variables are present, the backend **refuses to start** unless `DATABASE_URL` points to PostgreSQL.
+A failed start fails the `/ready` health check, so Railway keeps the previous deployment serving.
+
+The SQLite fallback is for local development and tests only. `ALLOW_EPHEMERAL_DATABASE=true` overrides the
+check for emergencies; it is logged CRITICAL, and all data is lost on the next redeploy.
+
+`/ready` shows `dependencies.database = {status, mode, backend, durable, revision}` and never the URL, host
+or credentials.
+
+With PostgreSQL attached, sessions, transcripts, the audit trail, latency, promises, debtor/account flags and
+contact-point suppression survive restarts and redeploys. Live calls in progress, pending Twilio call contexts
+and rate-limit counters are in-process and do not (D6).
+
+### Moving an existing deployment to PostgreSQL
+
+1. In the Railway project: **+ New → Database → PostgreSQL**, and keep the service name `Postgres`.
+2. On the backend service → **Variables → New Variable**: name `DATABASE_URL`, value
+   `${{Postgres.DATABASE_URL}}` (Railway autocompletes the reference). Delete any empty `DATABASE_URL`.
+3. Keep `APP_ENV=production` and `AUTO_MIGRATE=true`. Do not set `ALLOW_EPHEMERAL_DATABASE`. No other new
+   variables are needed.
+4. Deploy the backend. Order: Postgres service first, then the variable, then the backend deploy. The
+   frontend needs no change.
+5. Check migrations:
+   - `/ready` shows `"backend": "postgresql", "durable": true, "revision": "0002"` and `"mode":
+     "alembic_upgrade_head"`;
+   - the deploy log's `startup` line shows `db_backend=postgresql` and `db_revision=0002`;
+   - optionally, locally with the public URL: `DATABASE_URL=<DATABASE_PUBLIC_URL> alembic current` → `0002 (head)`.
+6. Check persistence:
+   1. Run a browser demo session (for example scenario E, "Please don't call me again").
+   2. Note the session in **Sessions**.
+   3. Trigger **Redeploy** of the backend.
+   4. After it is healthy, the session, its audit trail and E's "not eligible" flag are still there.
+7. Data recorded before this change was in the old container's SQLite file and cannot be recovered.
 4. Generate a public domain. Health check: `/ready` (configured in `railway.json`).
 5. Keep **1 replica** (sessions are stateful in-process; see DECISIONS.md D6). `drainingSeconds: 20` +
    uvicorn `--timeout-graceful-shutdown 20` let live sessions end cleanly on redeploy.
@@ -48,6 +84,7 @@ Railway (backend service variables):
 APP_ENV=production
 FRONTEND_URL=https://ai-voice-calling-collections-agent.vercel.app   # exact origin, no wildcard
 DATABASE_URL=${{Postgres.DATABASE_URL}}
+AUTO_MIGRATE=true
 POLICY_COUNTRY=JP            # simulated Asia/Tokyo calling window for outbound demo calls
 POLICY_TIMEZONE=Asia/Tokyo
 POLICY_CALLING_START_HOUR=8
