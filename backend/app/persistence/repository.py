@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..domain.audit import AuditType
+from ..domain.contact import contact_key, mask_number
 from ..domain.models import AccountTerms, DebtorProfile, Language
 from ..domain.scenarios import SCENARIOS
 from ..voice.latency import summarize
@@ -88,6 +89,9 @@ class Repository:
                         .where(t.collection_accounts.c.id == a.account_id)
                         .values(contact_attempts=0, stop_contact=False, stop_contact_at=None, **values)
                     )
+            if reset:
+                await conn.execute(t.debtors.update().values(stop_contact=False, stop_contact_at=None))
+                await conn.execute(t.contact_points.delete())
         return n
 
     async def get_account(self, scenario_key: str) -> tuple[DebtorProfile, AccountTerms] | None:
@@ -125,18 +129,58 @@ class Repository:
         return debtor, acc
 
     async def list_accounts(self) -> list[dict[str, Any]]:
-        q = sa.select(
-            t.collection_accounts.c.scenario_key,
-            t.collection_accounts.c.contact_attempts,
-            t.collection_accounts.c.stop_contact,
-            t.collection_accounts.c.stop_contact_at,
-        ).order_by(t.collection_accounts.c.scenario_key)
+        """Per-account contact eligibility. `eligible` covers the account and debtor
+        scopes; a contact-point stop is per destination (see list_contact_points)."""
+        a, d = t.collection_accounts, t.debtors
+        q = (
+            sa.select(
+                a.c.scenario_key,
+                a.c.contact_attempts,
+                a.c.stop_contact,
+                a.c.stop_contact_at,
+                d.c.stop_contact.label("debtor_stop_contact"),
+                d.c.stop_contact_at.label("debtor_stop_contact_at"),
+                d.c.full_name.label("debtor_name"),
+            )
+            .join(d, d.c.id == a.c.debtor_id)
+            .order_by(a.c.scenario_key)
+        )
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
+        out = []
+        for r in rows:
+            row = dict(r)
+            for k in ("stop_contact_at", "debtor_stop_contact_at"):
+                row[k] = row[k].isoformat() if row[k] else None
+            row["eligible"] = not (row["stop_contact"] or row["debtor_stop_contact"])
+            out.append(row)
+        return out
+
+    async def list_contact_points(self) -> list[dict[str, Any]]:
+        q = sa.select(t.contact_points.c.label, t.contact_points.c.stop_contact, t.contact_points.c.stop_contact_at)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q.order_by(t.contact_points.c.created_at))).mappings().all()
         return [
             {**dict(r), "stop_contact_at": r["stop_contact_at"].isoformat() if r["stop_contact_at"] else None}
             for r in rows
         ]
+
+    async def stop_contact_scopes(self, debtor_id: uuid.UUID, destination: str | None) -> dict[str, bool]:
+        """Debtor- and contact-point-level stop-contact flags for an outbound call."""
+        async with self.engine.connect() as conn:
+            debtor = (
+                await conn.execute(sa.select(t.debtors.c.stop_contact).where(t.debtors.c.id == debtor_id))
+            ).scalar()
+            cp = None
+            if destination:
+                cp = (
+                    await conn.execute(
+                        sa.select(t.contact_points.c.stop_contact).where(
+                            t.contact_points.c.key == contact_key(destination)
+                        )
+                    )
+                ).scalar()
+        return {"debtor": bool(debtor), "contact_point": bool(cp)}
 
     async def increment_contact_attempts(self, account_id: uuid.UUID) -> None:
         async with self.engine.begin() as conn:
@@ -334,13 +378,47 @@ class Repository:
         except IntegrityError:
             return False
 
-    async def set_stop_contact(self, account_id: uuid.UUID, at: datetime) -> None:
+    async def set_stop_contact(
+        self,
+        account_id: uuid.UUID,
+        at: datetime,
+        *,
+        debtor_id: uuid.UUID | None = None,
+        contact: str | None = None,
+    ) -> None:
+        """Persist a stop-contact request for the account, its debtor (every account of
+        that debtor) and, on phone calls, the contact point. Idempotent; the first
+        timestamp is kept."""
         async with self.engine.begin() as conn:
+            if debtor_id is None:
+                debtor_id = (
+                    await conn.execute(
+                        sa.select(t.collection_accounts.c.debtor_id).where(t.collection_accounts.c.id == account_id)
+                    )
+                ).scalar()
+            accounts = t.collection_accounts
             await conn.execute(
-                t.collection_accounts.update()
-                .where(t.collection_accounts.c.id == account_id)
+                accounts.update()
+                .where(sa.or_(accounts.c.id == account_id, accounts.c.debtor_id == debtor_id))
+                .where(accounts.c.stop_contact == sa.false())
                 .values(stop_contact=True, stop_contact_at=at)
             )
+            if debtor_id is not None:
+                await conn.execute(
+                    t.debtors.update()
+                    .where(t.debtors.c.id == debtor_id, t.debtors.c.stop_contact == sa.false())
+                    .values(stop_contact=True, stop_contact_at=at)
+                )
+            if contact:
+                key = contact_key(contact)
+                cp = t.contact_points
+                exists = (await conn.execute(sa.select(cp.c.stop_contact).where(cp.c.key == key))).first()
+                if exists is None:
+                    await conn.execute(
+                        cp.insert().values(key=key, label=mask_number(contact), stop_contact=True, stop_contact_at=at)
+                    )
+                elif not exists[0]:
+                    await conn.execute(cp.update().where(cp.c.key == key).values(stop_contact=True, stop_contact_at=at))
 
     async def insert_latency(self, session_id: uuid.UUID, payload: dict[str, Any], at: datetime) -> None:
         providers = payload.get("providers") or {}
@@ -418,10 +496,21 @@ def _json_row(r: Any) -> dict[str, Any]:
 class DbRecorder:
     """Persists session events off the hot path via its own queue and writer task."""
 
-    def __init__(self, repo: Repository, session_id: uuid.UUID, account_id: uuid.UUID, now: Any) -> None:
+    def __init__(
+        self,
+        repo: Repository,
+        session_id: uuid.UUID,
+        account_id: uuid.UUID,
+        now: Any,
+        *,
+        debtor_id: uuid.UUID | None = None,
+        contact: str | None = None,
+    ) -> None:
         self.repo = repo
         self.session_id = session_id
         self.account_id = account_id
+        self.debtor_id = debtor_id
+        self.contact = contact  # phone number of the person on the call (never persisted in clear)
         self._now = now
         self._q: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue(maxsize=5000)
         self._task: asyncio.Task[None] | None = None
@@ -471,7 +560,9 @@ class DbRecorder:
                     _dt(p["at"]),
                 )
             elif p["type"] == AuditType.STOP_CONTACT_REQUESTED.value:
-                await self.repo.set_stop_contact(self.account_id, _dt(p["at"]))
+                await self.repo.set_stop_contact(
+                    self.account_id, _dt(p["at"]), debtor_id=self.debtor_id, contact=self.contact
+                )
         elif kind == "turn.caller":
             await self.repo.insert_turn(sid, p, "caller", now)
         elif kind == "turn.agent":

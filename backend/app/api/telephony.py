@@ -109,7 +109,14 @@ async def start_call(body: CallRequest, request: Request, state: AppState = Depe
     sid = uuid.uuid4()
     from ..runtime import policy_from_settings
 
-    decisions = policy_from_settings(s).evaluate_contact(account, state.policy_clock.now(), sid)
+    stops = await state.repo.stop_contact_scopes(account.debtor_id, body.to)
+    decisions = policy_from_settings(s).evaluate_contact(
+        account,
+        state.policy_clock.now(),
+        sid,
+        debtor_stop_contact=stops["debtor"],
+        contact_point_stop_contact=stops["contact_point"],
+    )
     if not all(d.allowed for d in decisions):
         return {"status": "blocked_by_policy", "decisions": [d.to_dict() for d in decisions]}
     try:
@@ -125,6 +132,7 @@ async def start_call(body: CallRequest, request: Request, state: AppState = Depe
             "language": body.language.value,
             "call_id": handle.call_id,
             "decisions": [d.to_dict() for d in decisions],
+            "contact": body.to,  # in memory only; persisted as a salted hash if the person asks to stop
         },
     )
     return {
@@ -145,7 +153,14 @@ async def twilio_voice(request: Request, state: AppState = Depends(get_state)) -
         _remember_pending(
             state,
             sid,
-            {"scenario": "A", "language": "ja", "call_id": form.get("CallSid", ""), "decisions": [], "inbound": True},
+            {
+                "scenario": "A",
+                "language": "ja",
+                "call_id": form.get("CallSid", ""),
+                "decisions": [],
+                "inbound": True,
+                "contact": form.get("From") or None,
+            },
         )
     ws_base = (
         state.settings.twilio_webhook_base_url.rstrip("/").replace("https://", "wss://").replace("http://", "ws://")
@@ -250,6 +265,7 @@ async def twilio_media(ws: WebSocket) -> None:
                     transport=transport,
                     call_id=call_sid,
                     session_id=uuid.UUID(sid),
+                    contact=ctx.get("contact"),
                 )
                 for d in ctx.get("decisions", []):
                     sess.c.audit.record(AuditType.POLICY_DECISION, 0, **d)

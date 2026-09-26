@@ -32,6 +32,22 @@ debtors = sa.Table(
     sa.Column("preferred_language", sa.String(5), nullable=False),
     sa.Column("timezone", sa.String(40), nullable=False),
     sa.Column("synthetic", sa.Boolean, nullable=False, server_default=sa.true()),
+    # Stop-contact is a property of the person, not of one account: it gates every
+    # account of this debtor (see domain/contact.py for the contact-point scope).
+    sa.Column("stop_contact", sa.Boolean, nullable=False, server_default=sa.false()),
+    sa.Column("stop_contact_at", TS, nullable=True),
+    sa.Column("created_at", TS, nullable=False, server_default=sa.func.now()),
+)
+
+# A phone number at which a real person answered (outbound destination / inbound caller).
+# Only a salted hash and a masked label are stored, never the number itself.
+contact_points = sa.Table(
+    "contact_points",
+    metadata,
+    sa.Column("key", sa.String(64), primary_key=True),
+    sa.Column("label", sa.String(24), nullable=False),
+    sa.Column("stop_contact", sa.Boolean, nullable=False, server_default=sa.false()),
+    sa.Column("stop_contact_at", TS, nullable=True),
     sa.Column("created_at", TS, nullable=False, server_default=sa.func.now()),
 )
 

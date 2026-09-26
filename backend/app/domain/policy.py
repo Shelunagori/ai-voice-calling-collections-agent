@@ -114,8 +114,16 @@ class PolicyEngine:
         return self.config.country.strip().upper() in CALLING_WINDOW_COUNTRIES
 
     def evaluate_contact(
-        self, account: AccountTerms, now: datetime, session_id: uuid.UUID | None = None
+        self,
+        account: AccountTerms,
+        now: datetime,
+        session_id: uuid.UUID | None = None,
+        *,
+        debtor_stop_contact: bool = False,
+        contact_point_stop_contact: bool = False,
     ) -> list[PolicyDecision]:
+        """Outbound-contact gate. Stop-contact blocks if the account, its debtor, or the
+        destination contact point has an active request (owner ruling, 2026-09-26)."""
         out = []
         if self.calling_window_applies:
             local = now.astimezone(ZoneInfo(self.config.timezone))
@@ -157,13 +165,25 @@ class PolicyEngine:
                 limit=self.config.max_contact_attempts,
             )
         )
+        scopes = [
+            name
+            for name, flagged in (
+                ("account", account.stop_contact),
+                ("debtor", debtor_stop_contact),
+                ("contact_point", contact_point_stop_contact),
+            )
+            if flagged
+        ]
         out.append(
             self._d(
                 Rule.STOP_CONTACT_ACTIVE,
-                Decision.BLOCK if account.stop_contact else Decision.ALLOW,
-                "account has an active stop-contact flag" if account.stop_contact else "no stop-contact flag",
+                Decision.BLOCK if scopes else Decision.ALLOW,
+                f"debtor/contact has an active stop-contact request (scope: {', '.join(scopes)})"
+                if scopes
+                else "no stop-contact request for this account, debtor or contact point",
                 session_id,
                 now,
+                scopes=scopes,
             )
         )
         return out

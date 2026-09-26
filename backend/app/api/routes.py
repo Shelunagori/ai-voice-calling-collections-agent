@@ -163,6 +163,12 @@ async def accounts(state: AppState = Depends(get_state)) -> list[dict[str, Any]]
     return await state.repo.list_accounts()
 
 
+@router.get("/api/contact-points")
+async def contact_points(state: AppState = Depends(get_state)) -> list[dict[str, Any]]:
+    """Phone numbers at which someone asked us to stop, as masked labels only."""
+    return await state.repo.list_contact_points()
+
+
 @router.post("/api/operator/reset-demo", dependencies=[Depends(require_operator)])
 async def reset_demo(state: AppState = Depends(get_state)) -> dict[str, Any]:
     await state.repo.seed_demo_data(reset=True)

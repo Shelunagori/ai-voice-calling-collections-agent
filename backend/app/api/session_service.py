@@ -62,6 +62,7 @@ async def open_session(
     transport: Transport,
     call_id: str | None = None,
     session_id: uuid.UUID | None = None,
+    contact: str | None = None,
 ) -> tuple[VoiceSession, DbRecorder]:
     sc = get_scenario(scenario_key)
     loaded = await state.repo.get_account(sc.key)
@@ -72,7 +73,9 @@ async def open_session(
         account = sc.account
     clock = SystemClock()
     sid = session_id or uuid.uuid4()
-    rec = DbRecorder(state.repo, sid, account.account_id, clock.now)
+    # Stop-contact heard on this session is persisted for the debtor and, on phone calls,
+    # for the contact point (the number of the person on the line).
+    rec = DbRecorder(state.repo, sid, account.account_id, clock.now, debtor_id=debtor.debtor_id, contact=contact)
     sess = build_session(
         settings=state.settings,
         providers=state.providers,
