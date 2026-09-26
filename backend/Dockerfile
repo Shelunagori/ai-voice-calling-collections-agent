@@ -17,4 +17,4 @@ USER appuser
 ENV PORT=8000 APP_ENV=production
 EXPOSE 8000
 # Single worker: voice sessions are stateful in-process (see docs/DEPLOYMENT.md).
-CMD ["sh", "-c", "exec uvicorn app.main:_app_factory --factory --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*' --timeout-graceful-shutdown 20 --ws-max-size 1048576"]
+CMD ["sh", "-c", "exec uvicorn app.main:_app_factory --factory --host 0.0.0.0 --port ${PORT} --timeout-graceful-shutdown 20 --ws-max-size 1048576"]

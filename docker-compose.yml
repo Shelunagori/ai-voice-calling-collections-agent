@@ -23,6 +23,7 @@ services:
       APP_ENV: local
       FRONTEND_URL: http://localhost:3000
       PORT: "8000"
+      TRUST_PROXY_HEADERS: "false"   # port 8000 is published directly here
     depends_on:
       db:
         condition: service_healthy
