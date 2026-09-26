@@ -14,9 +14,18 @@ from dataclasses import dataclass
 
 from ..providers.base import LLMProvider, ProviderError
 from .models import Language
-from .responses import ResponsePlan, guard, numbers_match_template
+from .responses import Act, ResponsePlan, guard, numbers_match_template
 
 REALIZER_PROMPT_VERSION = "realize-v1"
+VERBATIM_ACTS = {
+    Act.CONFIRM_PROPOSAL,
+    Act.PTP_CONFIRMED,
+    Act.ALREADY_CONFIRMED,
+    Act.DISCLOSE,
+    Act.BALANCE_INFO,
+    Act.REJECT_PROPOSAL,
+    Act.STOP_CONTACT_ACK,
+}
 
 _SYSTEM = (
     "You are the voice of a polite automated assistant on a phone call. Rephrase the message inside "
@@ -55,6 +64,10 @@ class LLMRealizer:
 
     async def realize(self, plan: ResponsePlan) -> Realization:
         template = plan.render()
+        if VERBATIM_ACTS & set(plan.acts):
+            # Utterances that carry the terms themselves (read-back, confirmation, disclosure)
+            # are never paraphrased: the caller must hear the exact approved amount and date.
+            return Realization(template, "template", self._mono(), [])
         system = _SYSTEM.format(language="Japanese" if plan.language == Language.JA else "English")
         first: float | None = None
         parts: list[str] = []

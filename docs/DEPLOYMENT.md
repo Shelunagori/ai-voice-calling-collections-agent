@@ -21,8 +21,9 @@ the CI `docker` job builds and smoke-tests them.
 6. Optional providers: add the Cloudflare / Cartesia / Twilio variables from `.env.example`. For Twilio set
    `TWILIO_WEBHOOK_BASE_URL=https://<backend-domain>`.
 
-Railway terminates TLS; WebSockets work over `wss://<backend-domain>/ws/session`. Uvicorn runs with
-`--proxy-headers` so client IPs (rate limiting) come from `X-Forwarded-For`.
+Railway terminates TLS; WebSockets work over `wss://<backend-domain>/ws/session`. Rate limiting keys on the
+right-most `X-Forwarded-For` entry (appended by Railway's proxy) when `TRUST_PROXY_HEADERS=true` (default);
+set it to `false` wherever the backend port is reachable without that proxy.
 
 ## Frontend
 

@@ -30,8 +30,10 @@ the transcript so far:
 | hard ceiling | 2500 ms |
 
 With only a partial transcript the detector waits at least 1200 ms for the provider's final before
-committing on the partial. STT finals that arrive when no caller turn is open (late or stray) are discarded
-rather than leaking into the next turn. If the STT stream closes unexpectedly it is reopened (twice); after
+committing on the partial. An STT final that arrives after its turn was committed (`PROCESSING`) is
+discarded rather than leaking into the next turn; a non-filler final that arrives while the agent is speaking
+(a quick answer the VAD had not yet flagged) is treated as a barge-in, and one that arrives while `LISTENING`
+without VAD speech (quiet voice) becomes its own turn — words are never silently dropped. If the STT stream closes unexpectedly it is reopened (twice); after
 that a browser session degrades to typed input and a phone session ends with `stt_unavailable`.
 
 When VAD reports speech end the runtime sends the STT stream a `finalize` so the provider flushes promptly.

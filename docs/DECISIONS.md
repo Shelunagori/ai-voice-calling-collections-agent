@@ -11,7 +11,9 @@ are easier to show and test without a framework. Pipecat remains a good option f
 catches LLM failures, and independently detects stop-contact / human requests so they cannot be dropped.
 
 **D3 — Templates by default; LLM phrasing optional and guarded.** `RESPONSE_MODE=template` keeps replies
-compliant and fast; `llm` mode rephrases approved text and falls back on any guard violation.
+compliant and fast; `llm` mode rephrases approved text and falls back on any guard violation or any number
+not present in the template. Utterances that carry the terms themselves (disclosure, read-back, rejection
+reasons, promise confirmation, stop-contact acknowledgement) are never paraphrased.
 
 **D4 — Read-back must be heard.** A promise needs an explicit "yes" *after* ≥ 90 % of the read-back was
 played. Otherwise barge-in ("yes" over an unfinished question) could create consent to terms not heard.

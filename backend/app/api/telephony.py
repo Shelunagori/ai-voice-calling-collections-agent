@@ -235,10 +235,10 @@ async def twilio_media(ws: WebSocket) -> None:
                     metrics.inc("media_stream_auth_failures")
                     await ws.close(code=1008)
                     return
-                ctx = state.pending_calls.pop(sid)
-                if state.draining or len(state.sessions) >= state.settings.max_concurrent_sessions:
-                    await ws.close(code=1013)
+                if state.draining or len(state.sessions) + state.opening >= state.settings.max_concurrent_sessions:
+                    await ws.close(code=1013)  # entry kept: Twilio may retry the stream
                     return
+                ctx = state.pending_calls.pop(sid)
                 transport.stream_sid = start.get("streamSid", "")
                 call_sid = start.get("callSid") or ctx.get("call_id")
                 sess, rec = await open_session(

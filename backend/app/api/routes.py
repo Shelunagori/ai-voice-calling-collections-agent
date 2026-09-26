@@ -36,9 +36,10 @@ def forwarded_client(xff: str, fallback: str) -> str:
 
 
 def client_ip(request: Request) -> str:
-    return forwarded_client(
-        request.headers.get("x-forwarded-for", ""), request.client.host if request.client else "unknown"
-    )
+    peer = request.client.host if request.client else "unknown"
+    if not request.app.state.app_state.settings.trust_proxy_headers:
+        return peer
+    return forwarded_client(request.headers.get("x-forwarded-for", ""), peer)
 
 
 def require_operator(request: Request, state: AppState = Depends(get_state)) -> None:

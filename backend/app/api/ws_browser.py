@@ -60,7 +60,10 @@ class BrowserTransport:
 
 
 def _client_ip(ws: WebSocket) -> str:
-    return forwarded_client(ws.headers.get("x-forwarded-for", ""), ws.client.host if ws.client else "unknown")
+    peer = ws.client.host if ws.client else "unknown"
+    if not ws.app.state.app_state.settings.trust_proxy_headers:
+        return peer
+    return forwarded_client(ws.headers.get("x-forwarded-for", ""), peer)
 
 
 @router.websocket("/ws/session")

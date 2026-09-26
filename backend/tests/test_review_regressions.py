@@ -13,7 +13,7 @@ from app.domain.commands import Action, Interpretation, ProposedAction
 from app.domain.models import CallStatus, Language, PromiseStatus
 from app.domain.nlu_rules import interpret
 from app.domain.realizer import LLMRealizer
-from app.domain.responses import guard
+from app.domain.responses import Act, ResponsePlan, guard
 from app.domain.understanding import merge
 from app.main import create_app
 from app.providers.factory import build_providers
@@ -112,7 +112,9 @@ async def test_llm_realizer_rejects_numbers_not_in_template():
             yield "Sure, pay twenty thousand yen and we're done."
 
     _, verified = _plans()
-    r = await LLMRealizer(Liar(), time.monotonic, 2).realize(verified)
+    ask = ResponsePlan([Act.ASK_PLAN], Language.EN, dict(verified.slots), True, set(verified.approved_amounts),
+                       set(verified.approved_dates))  # fmt: skip
+    r = await LLMRealizer(Liar(), time.monotonic, 2).realize(ask)
     assert r.source == "template_fallback"
 
 
@@ -203,18 +205,59 @@ def test_controller_ignores_turns_after_transfer():
 
 
 # ---------------------------------------------------------------- 9. late STT final
-async def test_late_final_does_not_leak_into_next_turn():
+async def _voice_session_listening():
     sess, tr, clk, _ = make_session("A", input_mode="voice")
     await sess.start(run_background=False)
     await drain(sess, clk)
+    return sess, tr, clk
+
+
+async def test_late_final_while_processing_does_not_leak():
     from app.providers.base import STTEvent, STTEventType
 
-    # a FINAL that arrives while nobody is speaking must be discarded
-    assert sess.state == VoiceState.LISTENING
-    stream = sess._stt_stream
-    await stream._q.put(STTEvent(STTEventType.FINAL, text="no", at=clk.monotonic()))
+    sess, tr, clk = await _voice_session_listening()
+    sess._applied = True
+    sess.lifecycle.to(VoiceState.PROCESSING, "test: turn already committed")
+    await sess._stt_stream._q.put(STTEvent(STTEventType.FINAL, text="no", at=clk.monotonic()))
     await clk.advance_async(0.1)
-    assert sess._turn_text == []
+    assert sess._turn_text == [] and tr.of("transcript.discarded")
+
+
+async def test_final_during_agent_speech_is_a_barge_in_not_lost():
+    from app.providers.base import STTEvent, STTEventType
+
+    sess, tr, clk, _ = make_session("A", input_mode="voice")
+    await sess.start(run_background=False)
+    for _ in range(20):
+        await clk.advance_async(0.05)
+    assert sess.state == VoiceState.AGENT_SPEAKING
+    await sess._stt_stream._q.put(STTEvent(STTEventType.FINAL, text="yes this is me", at=clk.monotonic()))
+    for _ in range(40):  # INTERRUPTED counts as idle for drain(); tick until the turn commits
+        await clk.advance_async(0.05)
+        await sess.tick()
+    await drain(sess, clk)
+    assert sess.barge_ins and sess.c.state.identity_status.value == "NAME_CONFIRMED"
+
+
+async def test_final_in_listening_without_vad_is_its_own_turn():
+    from app.providers.base import STTEvent, STTEventType
+
+    sess, tr, clk = await _voice_session_listening()
+    await sess._stt_stream._q.put(STTEvent(STTEventType.FINAL, text="yes this is me", at=clk.monotonic()))
+    await drain(sess, clk)
+    assert sess.c.state.identity_status.value == "NAME_CONFIRMED"
+
+
+# ---------------------------------------------------------------- re-review: fact-carrying acts stay verbatim
+async def test_llm_cannot_drop_amount_or_date_from_readback():
+    class Vague(MockLLM):
+        async def stream_text(self, system, user, *, timeout):
+            yield "Just to confirm: you'll pay the amount we discussed. Is that correct?"
+
+    _, verified = _plans()
+    assert verified.primary == Act.CONFIRM_PROPOSAL
+    r = await LLMRealizer(Vague(), time.monotonic, 2).realize(verified)
+    assert r.text == verified.render()
 
 
 # ---------------------------------------------------------------- notification recorded before end
@@ -232,13 +275,29 @@ async def test_notification_emitted_before_session_end():
 
 # ---------------------------------------------------------------- lower-severity hardening
 def test_rate_limit_uses_proxy_appended_address():
-    from starlette.requests import Request
+    from app.api.routes import forwarded_client
 
-    from app.api.routes import client_ip
-
-    scope = {"type": "http", "headers": [(b"x-forwarded-for", b"1.2.3.4, 203.0.113.9")], "client": ("10.0.0.1", 1)}
     # the left-most entry is client-controlled; the right-most is appended by the platform proxy
-    assert client_ip(Request(scope)) == "203.0.113.9"
+    assert forwarded_client("1.2.3.4, 203.0.113.9", "10.0.0.1") == "203.0.113.9"
+    assert forwarded_client("", "10.0.0.1") == "10.0.0.1"
+
+
+def test_forwarded_header_ignored_when_not_behind_proxy(tmp_path):
+    s = settings_for_tests(trust_proxy_headers=False, rate_limit_sessions_per_minute=1,
+                           database_url=f"sqlite+aiosqlite:///{tmp_path}/t.db")  # fmt: skip
+    app = create_app(s, build_providers(s))
+    from starlette.websockets import WebSocketDisconnect
+
+    with TestClient(app) as c:
+        with c.websocket_connect("/ws/session?scenario=A", headers={"x-forwarded-for": "1.1.1.1"}) as ws:
+            ws.receive_text()
+            ws.send_text(json.dumps({"type": "end"}))
+        try:  # a different forged header must not buy a new rate-limit bucket
+            with c.websocket_connect("/ws/session?scenario=A", headers={"x-forwarded-for": "2.2.2.2"}) as ws:
+                ws.receive_text()
+            raise AssertionError("second session should have been rate limited")
+        except WebSocketDisconnect:
+            pass
 
 
 def test_phone_session_detail_requires_operator(tmp_path):

@@ -76,7 +76,9 @@ class Settings(BaseSettings):
     max_concurrent_sessions: int = 25
     session_idle_timeout_s: float = 300.0
 
-    # Rate limiting (per client IP)
+    # Rate limiting (per client IP). X-Forwarded-For (right-most entry) is trusted only when the
+    # backend is reachable solely through a proxy that appends it (Railway, Vercel).
+    trust_proxy_headers: bool = True
     rate_limit_sessions_per_minute: int = 10
     rate_limit_calls_per_hour: int = 5
 

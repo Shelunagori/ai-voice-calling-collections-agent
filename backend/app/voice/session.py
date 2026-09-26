@@ -367,10 +367,27 @@ class VoiceSession:
                     ):
                         await self.barge_in("stt_partial")
                 elif ev.type == STTEventType.FINAL:
+                    text = ev.text.strip()
+                    if self.state == VoiceState.PROCESSING:
+                        # Late final for a turn that was already committed: never leak it forward.
+                        if text:
+                            self.emit("transcript.discarded", {"text": text, "state": self.state.value})
+                        continue
+                    if (
+                        self.state in (VoiceState.AGENT_SPEAKING, VoiceState.LISTENING)
+                        and text
+                        and not is_filler_only(text)
+                    ):
+                        # Words the VAD did not (yet) treat as a turn: a quick answer over the agent,
+                        # or quiet speech. They are a turn, never silently dropped.
+                        if self.state == VoiceState.AGENT_SPEAKING:
+                            await self.barge_in("stt_final")
+                        if self.state in (VoiceState.LISTENING, VoiceState.INTERRUPTED):
+                            if self.state == VoiceState.LISTENING:
+                                self.lifecycle.to(VoiceState.USER_SPEAKING, "stt_final_without_vad")
+                            if self._speech_end_at is None and not self.vad.speaking:
+                                self._speech_end_at = self._mono()
                     if self.state not in (VoiceState.USER_SPEAKING, VoiceState.INTERRUPTED):
-                        # Late final for a turn already committed (or stray): never leak it forward.
-                        if ev.text.strip():
-                            self.emit("transcript.discarded", {"text": ev.text.strip(), "state": self.state.value})
                         continue
                     if ev.text.strip():
                         self._turn_text.append(ev.text.strip())
