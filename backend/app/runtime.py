@@ -36,6 +36,7 @@ class Providers:
 def policy_from_settings(s: Settings) -> PolicyEngine:
     return PolicyEngine(
         PolicyConfig(
+            country=s.policy_country,
             timezone=s.policy_timezone,
             calling_start_hour=s.policy_calling_start_hour,
             calling_end_hour=s.policy_calling_end_hour,

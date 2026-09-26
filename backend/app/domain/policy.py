@@ -36,6 +36,9 @@ class Rule(StrEnum):
     RESPONSE_GUARD = "RESPONSE_DISCLOSURE_GUARD"
 
 
+CALLING_WINDOW_COUNTRIES = {"JP"}
+
+
 class Decision(StrEnum):
     ALLOW = "ALLOW"
     BLOCK = "BLOCK"
@@ -70,6 +73,10 @@ class PolicyDecision:
 
 @dataclass(frozen=True)
 class PolicyConfig:
+    # Country whose simulated calling-hours window applies to outbound demo contact.
+    # Only countries in CALLING_WINDOW_COUNTRIES have a window; anything else (including
+    # empty) makes the window rule NOT_APPLICABLE. Attempt and stop-contact rules always run.
+    country: str = "JP"
     timezone: str = "Asia/Tokyo"
     calling_start_hour: int = 8
     calling_end_hour: int = 21  # exclusive
@@ -102,23 +109,42 @@ class PolicyEngine:
         return PolicyDecision(rule, decision, reason, session_id, now, details)
 
     # ---- contact eligibility (outbound initiation) --------------------------------
+    @property
+    def calling_window_applies(self) -> bool:
+        return self.config.country.strip().upper() in CALLING_WINDOW_COUNTRIES
+
     def evaluate_contact(
         self, account: AccountTerms, now: datetime, session_id: uuid.UUID | None = None
     ) -> list[PolicyDecision]:
         out = []
-        local = now.astimezone(ZoneInfo(self.config.timezone))
-        in_window = self.config.calling_start_hour <= local.hour < self.config.calling_end_hour
-        out.append(
-            self._d(
-                Rule.CONTACT_WINDOW,
-                Decision.ALLOW if in_window else Decision.BLOCK,
-                f"local time {local:%H:%M} {self.config.timezone}; demo window "
-                f"{self.config.calling_start_hour:02d}:00-{self.config.calling_end_hour:02d}:00",
-                session_id,
-                now,
-                local_time=local.isoformat(),
+        if self.calling_window_applies:
+            local = now.astimezone(ZoneInfo(self.config.timezone))
+            in_window = self.config.calling_start_hour <= local.hour < self.config.calling_end_hour
+            out.append(
+                self._d(
+                    Rule.CONTACT_WINDOW,
+                    Decision.ALLOW if in_window else Decision.BLOCK,
+                    f"local time {local:%H:%M} {self.config.timezone}; simulated demo window "
+                    f"{self.config.calling_start_hour:02d}:00-{self.config.calling_end_hour:02d}:00 "
+                    f"(POLICY_COUNTRY={self.config.country.upper()})",
+                    session_id,
+                    now,
+                    local_time=local.isoformat(),
+                    country=self.config.country.upper(),
+                )
             )
-        )
+        else:
+            out.append(
+                self._d(
+                    Rule.CONTACT_WINDOW,
+                    Decision.NOT_APPLICABLE,
+                    f"no simulated calling-hours window configured for POLICY_COUNTRY="
+                    f"{self.config.country.upper() or '(empty)'}",
+                    session_id,
+                    now,
+                    country=self.config.country.upper(),
+                )
+            )
         under = account.contact_attempts < self.config.max_contact_attempts
         out.append(
             self._d(

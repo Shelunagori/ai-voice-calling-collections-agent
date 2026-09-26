@@ -6,10 +6,11 @@ Every external dependency is optional. Missing credentials degrade the capabilit
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -83,6 +84,10 @@ class Settings(BaseSettings):
     rate_limit_calls_per_hour: int = 5
 
     # Demo policy (simulated; NOT legal requirements)
+    # POLICY_COUNTRY=JP applies the simulated calling window below to outbound contact.
+    # Empty (POLICY_COUNTRY=) or any other country -> window NOT_APPLICABLE. Read from the raw
+    # environment so an explicitly empty value is honoured (env_ignore_empty would drop it).
+    policy_country: str = Field(default_factory=lambda: os.environ.get("POLICY_COUNTRY", "JP"))
     policy_timezone: str = "Asia/Tokyo"
     policy_calling_start_hour: int = 8
     policy_calling_end_hour: int = 21
@@ -159,6 +164,7 @@ def settings_for_tests(**overrides: object) -> Settings:
         "stt_provider": "mock",
         "tts_provider": "mock",
         "telephony_enabled": False,
+        "policy_country": "JP",
     }
     base.update(overrides)
     # Tests never read developer .env files (which may hold real credentials).

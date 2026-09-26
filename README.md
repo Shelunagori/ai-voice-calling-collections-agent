@@ -65,6 +65,7 @@ Full script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 |---|---|
 | Conversation controller + typed proposals (`Interpretation`/`ProposedAction`) | Implemented, tested |
 | Policy engine (identity, disclosure, min amount, ≤ balance, date window, no discounts, stop-contact, transfer, calling hours, attempt limits, single promise) | Implemented, tested, audited |
+| Country-aware outbound calling window (`POLICY_COUNTRY=JP` → simulated Asia/Tokyo 08:00–21:00; empty/other → `NOT_APPLICABLE`, attempt + stop-contact rules still apply) | Implemented, tested |
 | Promise-to-pay (verified + valid + read-back fully played + explicit yes + policy) | Implemented, tested; DB-unique per session |
 | Output guard (no amounts/debt words before verification; only approved amounts/dates in ¥/円/yen/JPY/spoken forms; no threats/waivers) + LLM rephrasings may not introduce any number absent from the approved template | Implemented, tested |
 | Voice runtime: energy VAD with noise floor, semantic end-of-turn, barge-in, generation-tagged paced playback, lifecycle state machine | Implemented, tested (virtual clock + wall clock) |

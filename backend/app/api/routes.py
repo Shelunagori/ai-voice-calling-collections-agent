@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from .. import __version__
+from ..domain.policy import CALLING_WINDOW_COUNTRIES
 from ..domain.scenarios import SCENARIOS
 from ..observability import metrics
 from ..state import AppState
@@ -110,6 +111,8 @@ async def capabilities(state: AppState = Depends(get_state)) -> dict[str, Any]:
         "languages": ["en", "ja"],
         "latency_budget_ms": 1500,
         "policy": {
+            "country": s.policy_country.upper() or None,
+            "calling_window_applies": s.policy_country.strip().upper() in CALLING_WINDOW_COUNTRIES,
             "timezone": s.policy_timezone,
             "calling_hours": f"{s.policy_calling_start_hour:02d}:00-{s.policy_calling_end_hour:02d}:00",
             "max_contact_attempts": s.policy_max_contact_attempts,

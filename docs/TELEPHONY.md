@@ -9,8 +9,8 @@ WebSocket closes), so nothing can be spoofed on a default deployment.
 
 1. Operator calls `POST /api/operator/calls` with `Authorization: Bearer $OPERATOR_TOKEN` and
    `{"to": "+81…", "scenario": "A", "language": "ja"}`. Checks: telephony active, per-IP rate limit, E.164
-   format, number on `DEMO_CALL_ALLOWED_NUMBERS`, then the contact policy (calling window in Asia/Tokyo,
-   attempt limit, account stop-contact). Blocked → `{"status": "blocked_by_policy", decisions}` and nothing is
+   format, number on `DEMO_CALL_ALLOWED_NUMBERS`, then the contact policy (simulated calling window when
+   `POLICY_COUNTRY=JP`, otherwise `NOT_APPLICABLE`; attempt limit; account stop-contact). Blocked → `{"status": "blocked_by_policy", decisions}` and nothing is
    dialled. Allowed → Twilio `Calls.json` with status callbacks; attempts are incremented.
 2. Twilio requests `POST /telephony/twilio/voice?session_id=…` — `X-Twilio-Signature` validated against
    `TWILIO_WEBHOOK_BASE_URL + path + query`. Response TwiML:
