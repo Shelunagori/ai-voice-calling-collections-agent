@@ -38,4 +38,4 @@ is still playing (it is repeated rather than accepted).
   instead of clicking. Latency panel then shows real provider timings.
 - `LLM_PROVIDER=cloudflare`: free-form phrasing is understood by the LLM; caller turn metadata shows
   `llm_used`.
-- Twilio: `/operator` → place a call to your verified number.
+- Twilio: **Telephony** (`/telephony`) → Start Call to your allowlisted number → **Open Session**.

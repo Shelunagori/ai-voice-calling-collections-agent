@@ -179,8 +179,8 @@ Checks: `cd backend && ruff check app tests alembic && mypy app && pytest -q && 
 Railway (backend + PostgreSQL) and Railway or Vercel (frontend). Everything is prepared — Dockerfiles,
 `railway.json`, `/ready` health check, `PORT` handling, migrations on start, graceful shutdown. The live
 instance was deployed by the repository owner; the assistant that wrote this code has not deployed it.
-Phone-call audit trails need the server-only `OPERATOR_TOKEN` and `OPERATOR_CONSOLE_PASSWORD` on the
-frontend (see DEPLOYMENT.md). Step-by-step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Phone-session audit detail and the **Telephony → Start Call** page need the server-only `OPERATOR_TOKEN` on
+the frontend (see DEPLOYMENT.md); there is no browser login and the token never reaches the browser. Step-by-step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 Telephony setup: [docs/TELEPHONY.md](docs/TELEPHONY.md).
 
 ## 13. Project structure
@@ -194,7 +194,7 @@ backend/
   app/persistence/   schema, repository, DB recorder      alembic/  migrations
   app/evaluation/    cases, runner, judges, audio benchmark
   tests/             unit, policy, state machine, API, provider contracts, persistence, runtime
-frontend/            Next.js console: /, /demo, /architecture, /evaluation, /sessions, /operator
+frontend/            Next.js console: /, /demo, /architecture, /evaluation, /sessions, /telephony
 docs/                architecture, runtime, policy, evaluation, telephony, deployment, post-training, decisions
 ```
 

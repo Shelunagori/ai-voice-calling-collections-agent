@@ -33,10 +33,10 @@ Option A — Railway: second service, Root Directory `frontend`, build variable
 
 Option B — Vercel: import the repo, root `frontend`, env `NEXT_PUBLIC_API_BASE_URL`.
 
-Operator audit access (either option): set the **server-only** variables `OPERATOR_TOKEN` (same value as
-the backend) and `OPERATOR_CONSOLE_PASSWORD` on the frontend service. They are read only by the Next.js
-route handlers under `app/api/operator/*` and are never `NEXT_PUBLIC_`, so they are not inlined into client
-JavaScript (`npm run check:bundle` builds with canary values and scans the browser-reachable output).
+Operator features (either option): set the **server-only** variable `OPERATOR_TOKEN` (same value as the
+backend) on the frontend service. It is read only by the Next.js route handlers under `app/api/operator/*`
+and is never `NEXT_PUBLIC_`, so it is not inlined into client JavaScript (`npm run check:bundle` builds with
+a canary value and scans the browser-reachable output).
 
 Then set the backend `FRONTEND_URL` to the frontend origin (CORS + WebSocket origin check in production).
 
@@ -60,21 +60,31 @@ Vercel (frontend):
 ```env
 # build-time, public
 NEXT_PUBLIC_API_BASE_URL=https://ai-voice-calling-collections-agent-production.up.railway.app
-# server-only (Production environment; do NOT prefix with NEXT_PUBLIC_)
+# server-only (do NOT prefix with NEXT_PUBLIC_)
 OPERATOR_TOKEN=<same value as Railway OPERATOR_TOKEN>
-OPERATOR_CONSOLE_PASSWORD=<new long random password for the Sessions page sign-in>
+# optional server-only backend URL; defaults to NEXT_PUBLIC_API_BASE_URL
+# BACKEND_API_BASE_URL=https://ai-voice-calling-collections-agent-production.up.railway.app
 ```
 
-Operator auth flow for protected audit detail (phone sessions):
+Operator flow (no browser login, reviewer-friendly):
 
 ```
-browser --/api/operator/sessions/:id (same origin, HttpOnly cookie)--> Next.js route handler
-        --Authorization: Bearer OPERATOR_TOKEN--> Railway /api/sessions/:id
+browser --GET  /api/operator/sessions/:id (same origin)--> Next.js route --Bearer OPERATOR_TOKEN--> Railway GET  /api/sessions/:id
+browser --POST /api/operator/calls        (same origin)--> Next.js route --Bearer OPERATOR_TOKEN--> Railway POST /api/operator/calls --> Twilio
 ```
 
-The browser never receives the token; it signs in once with `OPERATOR_CONSOLE_PASSWORD` and gets an
-HttpOnly, `SameSite=Strict`, 8-hour HMAC-signed cookie scoped to `/api/operator`. Browser-demo sessions open
-without sign-in; the backend still refuses phone-session detail without the token.
+- Only these two backend routes are proxied; session ids must be UUIDs; Start Call forwards only `to`,
+  `scenario`, `language`. Browser headers (including any `Authorization`) are never forwarded; backend
+  error bodies are replaced by fixed messages.
+- Start Call accepts only same-origin `application/json` requests (blocks cross-site forms / CSRF), rejects
+  a repeat call to the same number within 30 s and allows 3 calls per client per 10 minutes (per server
+  instance). Railway still enforces the allowlist (`DEMO_CALL_ALLOWED_NUMBERS`), its own hourly limit, the
+  calling window, attempt limit and stop-contact; Twilio webhooks stay signed and the media stream keeps
+  its per-call HMAC.
+- **Trade-off (accepted for this POC):** anyone who can open the console can read phone-session audit
+  detail and start calls to allowlisted numbers. The token itself never leaves the server, and the Railway
+  endpoints still reject requests without it. Put Vercel Deployment Protection (or an auth layer) in front
+  of the console before using it with anything but your own test numbers.
 
 The browser builds the WebSocket URL from this value (`https` → `wss`, same host), never from the Vercel
 origin: `wss://ai-voice-calling-collections-agent-production.up.railway.app/ws/session?...`.
@@ -87,13 +97,12 @@ curl https://<backend>/api/capabilities
 curl -X POST https://<backend>/api/eval/run   # expect passed == total
 ```
 Then open the frontend, run scenario A, and open the session's audit trail. For a phone session: open it
-from Sessions, sign in with `OPERATOR_CONSOLE_PASSWORD`, confirm the detail loads, and check in DevTools →
-Network that the request goes to `/api/operator/sessions/<id>` on the Vercel origin with no
-`Authorization` header.
+from Sessions (no prompt), confirm the detail loads, and check in DevTools → Network that the request goes
+to `/api/operator/sessions/<id>` on the Vercel origin with no `Authorization` header. On **Telephony**, start
+a call to an allowlisted number and use **Open Session**.
 
 ## Environment reference
 
 See [`.env.example`](../.env.example). Secrets (`CLOUDFLARE_API_TOKEN`, `CARTESIA_API_KEY`,
-`TWILIO_AUTH_TOKEN`, `OPERATOR_TOKEN`) are backend variables. The only secrets the frontend holds are the
-server-only `OPERATOR_TOKEN` and `OPERATOR_CONSOLE_PASSWORD` used by its route handlers; never expose either
-through a `NEXT_PUBLIC_` variable.
+`TWILIO_AUTH_TOKEN`, `OPERATOR_TOKEN`) are backend variables. The only secret the frontend holds is the
+server-only `OPERATOR_TOKEN` used by its route handlers; never expose it through a `NEXT_PUBLIC_` variable.

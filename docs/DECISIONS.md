@@ -45,12 +45,14 @@ as an inline notice. Found after a production crash: an expression-bodied `useEf
 that Chrome 14x's `scrollIntoView()` now returns, React called it as a cleanup and the route died. A
 test now rejects expression-bodied effects.
 
-**D14 — Operator console auth via a Next.js server proxy.** Phone-session audit detail stays
-operator-only on the backend. The browser calls same-origin route handlers; the Next.js server adds
-`OPERATOR_TOKEN` for an operator who signed in with a separate `OPERATOR_CONSOLE_PASSWORD` (HttpOnly,
-SameSite=Strict, HMAC-signed 8 h cookie keyed from the token). Alternative considered: typing the backend
-token into the browser (as the Telephony page still does for placing calls) — rejected for audit viewing
-because the bearer would reach the browser. Limitation: login throttling is per server instance.
+**D14 — Operator features via a server-only token proxy, no browser login.** Railway keeps requiring
+`OPERATOR_TOKEN` for phone-session detail and outbound calls. The browser calls two same-origin Next.js
+route handlers (`GET /api/operator/sessions/[id]`, `POST /api/operator/calls`); the server adds the token.
+A console password + signed cookie was built first and then removed at the owner's request: for a hiring
+POC the reviewer friction outweighed the benefit. Consequence: the console itself is not access-controlled —
+anyone with the URL can read phone-session audit detail and start calls to allowlisted numbers. Mitigations:
+allowlist, backend hourly limit and contact policy, same-origin JSON only, per-instance duplicate/rate
+guard on Start Call. Production would put SSO or Vercel Deployment Protection in front.
 
 **D15 — Allowed-action contract instead of prompt wording.** Found on a real PSTN call: an invalid LLM DOB
 fell back to an unconstrained parser that read a birth year as money. The phase now constrains every layer

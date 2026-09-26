@@ -37,8 +37,13 @@ WebSocket closes), so nothing can be spoofed on a default deployment.
 3. Set `TELEPHONY_ENABLED=true`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `OPERATOR_TOKEN`,
    `DEMO_CALL_ALLOWED_NUMBERS` (your own verified number), optionally `TWILIO_TRANSFER_NUMBER`.
 4. Optional inbound: point the number's Voice webhook to `POST {base}/telephony/twilio/voice`.
-5. Use the `/operator` page (token held in memory only) or curl to place a call. Calling to Japan from a
-   non-Japanese number may need Twilio geo-permissions enabled.
+5. Place a call from the console's **Telephony** page (`/telephony`): enter an allowlisted E.164 number,
+   pick scenario and language, **Start Call**. The Next.js server forwards the request with the server-only
+   `OPERATOR_TOKEN` (also set on the frontend); the page shows the policy decisions, session id and Twilio
+   call id, polls the session's `call_status` until it is terminal, and links to the session audit page.
+   curl against Railway with the bearer token still works. Resetting demo accounts is curl-only
+   (`POST /api/operator/reset-demo`). Calling to Japan from a non-Japanese number may need Twilio
+   geo-permissions enabled.
 
 ## Security
 
