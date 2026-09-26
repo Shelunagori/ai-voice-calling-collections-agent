@@ -291,6 +291,15 @@ def expectation_checks(case: EvalCase, sess: VoiceSession) -> list[dict[str, Any
             out.append(_chk("expect_rule_blocked", v in blocked, str(sorted(set(blocked)))))
         elif k == "audit_contains":
             out.append(_chk("expect_audit_event", any(e.type.value == v for e in ev)))
+        elif k == "audit_absent":
+            out.append(_chk(f"expect_no_{v}", not any(e.type.value == v for e in ev)))
+        elif k == "audit_order":
+            types = [e.type.value for e in ev]
+            idx = [types.index(x) if x in types else -1 for x in v]
+            ok = all(i >= 0 for i in idx) and idx == sorted(idx)
+            out.append(_chk("expect_audit_order", ok, f"positions={dict(zip(v, idx, strict=True))}"))
+        elif k == "identity_attempts":
+            out.append(_chk("expect_identity_attempts", st.identity_attempts == v, f"got {st.identity_attempts}"))
         elif k == "min_barge_ins":
             out.append(_chk("expect_barge_in", len(sess.barge_ins) >= v, f"got {len(sess.barge_ins)}"))
         elif k == "max_barge_in_cancel_ms":

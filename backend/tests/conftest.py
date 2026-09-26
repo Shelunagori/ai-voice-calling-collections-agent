@@ -68,7 +68,7 @@ def say(c: ConversationController, text: str, delivered: float = 1.0):
     """Interpret with the deterministic parser, apply, and mark the reply as played."""
     from app.domain import nlu_rules
 
-    interp = nlu_rules.interpret(text, c.lang, c.today(), expecting_dob=c.state.phase.value == "IDENTITY_DOB")
+    interp = nlu_rules.interpret(text, c.lang, c.today(), context=c.turn_context())
     out = c.apply(interp, text)
     c.mark_delivered(out.plan, delivered)
     return out
