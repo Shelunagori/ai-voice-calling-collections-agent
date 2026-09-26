@@ -101,6 +101,46 @@ class AccountTerms:
     stop_contact: bool = False
 
 
+@dataclass(frozen=True)
+class DobParts:
+    """Date-of-birth parts the caller explicitly said. Missing parts stay None and are
+    never filled in; identity is only verified from a complete, real calendar date."""
+
+    year: int | None = None
+    month: int | None = None
+    day: int | None = None
+
+    @property
+    def has_any(self) -> bool:
+        return any(v is not None for v in (self.year, self.month, self.day))
+
+    @property
+    def complete(self) -> bool:
+        return all(v is not None for v in (self.year, self.month, self.day))
+
+    @property
+    def missing(self) -> list[str]:
+        return [k for k in ("year", "month", "day") if getattr(self, k) is None]
+
+    def as_date(self) -> date | None:
+        if self.year is None or self.month is None or self.day is None:
+            return None
+        try:
+            return date(self.year, self.month, self.day)
+        except ValueError:
+            return None
+
+    def merged_over(self, earlier: DobParts | None) -> DobParts:
+        """Parts from this turn replace (correct) earlier parts; missing ones are kept."""
+        if earlier is None:
+            return self
+        return DobParts(
+            self.year if self.year is not None else earlier.year,
+            self.month if self.month is not None else earlier.month,
+            self.day if self.day is not None else earlier.day,
+        )
+
+
 @dataclass
 class PaymentPromise:
     promise_id: uuid.UUID
@@ -128,6 +168,7 @@ class CollectionState:
     identity_status: IdentityStatus = IdentityStatus.UNVERIFIED
     identity_attempts: int = 0
     debt_disclosed: bool = False
+    partial_dob: DobParts | None = None  # parts collected so far while the DOB is incomplete
 
     proposed_amount: int | None = None
     proposed_date: date | None = None

@@ -10,6 +10,7 @@ through this function.
 
 from __future__ import annotations
 
+import calendar
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -25,6 +26,7 @@ from .models import (
     CollectionState,
     DebtorProfile,
     DialogPhase,
+    DobParts,
     IdentityStatus,
     Language,
     PaymentPromise,
@@ -34,6 +36,7 @@ from .models import (
 from .policy import PolicyDecision, PolicyEngine, Rule
 from .responses import REJECT_REASON, Act, ResponsePlan, fmt_date, fmt_money
 from .scenarios import ORG_NAME
+from .turn_context import TurnContext, constrain, context_for
 
 
 class Effect(StrEnum):
@@ -113,6 +116,8 @@ class ConversationController:
             "first_name": self.debtor.full_name.split()[0],
             "family_name": (self.debtor.display_name_ja.split() or [""])[0],
         }
+        if s.partial_dob is not None:
+            slots["dob_question"] = self._dob_question(s.partial_dob)
         if s.disclosure_allowed:
             slots.update(
                 balance=fmt_money(s.outstanding_balance, s.currency, self.lang),
@@ -203,7 +208,7 @@ class ConversationController:
             case DialogPhase.IDENTITY_NAME | DialogPhase.GREETING:
                 return [Act.ASK_NAME_AGAIN]
             case DialogPhase.IDENTITY_DOB:
-                return [Act.ASK_DOB]
+                return [Act.ASK_DOB_PART] if s.partial_dob else [Act.ASK_DOB]
             case DialogPhase.CONFIRMATION:
                 return [Act.CONFIRM_PROPOSAL]
             case DialogPhase.NEGOTIATION:
@@ -216,7 +221,25 @@ class ConversationController:
                 return []
 
     # ------------------------------------------------------------------ main entry
+    def turn_context(self) -> TurnContext:
+        """The allowed-action contract for the caller's next turn (see turn_context.py)."""
+        return context_for(self.state.phase)
+
     def apply(self, interp: Interpretation, caller_text: str = "") -> TurnOutcome:
+        # Defence in depth: whatever produced `interp` (LLM, rules, a test), actions the
+        # current phase does not accept are dropped here and audited, never acted on.
+        ctx = self.turn_context()
+        interp = constrain(interp, ctx)
+        dropped = [n.split(":", 1)[1] for n in interp.notes if n.startswith("out_of_phase:")]
+        if dropped:
+            self.audit.record(
+                AuditType.NLU_OUT_OF_PHASE,
+                self.turn_index + 1,
+                phase=ctx.phase.value,
+                expected_slot=ctx.expected_slot.value,
+                dropped=dropped,
+                source=interp.source,
+            )
         out = self._apply(interp, caller_text)
         s = self.state
         # Consent only ever answers the read-back that was *just* asked: any other reply
@@ -290,7 +313,7 @@ class ConversationController:
 
     def _identity(self, interp: Interpretation, out: TurnOutcome, now: object) -> TurnOutcome:
         s = self.state
-        dob_action = interp.first(Action.PROVIDE_DOB)
+        dob_action = interp.first(Action.PROVIDE_DOB) or interp.first(Action.PARTIAL_DOB)
         wants_details = interp.has(Action.ASK_BALANCE) or interp.has(Action.PROPOSE_PAYMENT)
 
         if interp.has(Action.WRONG_PERSON) or (
@@ -319,30 +342,101 @@ class ConversationController:
                 return self._pre_verification(interp, out, wants_details, [Act.ASK_NAME_AGAIN])
 
         # NAME_CONFIRMED: need the knowledge factor
-        if dob_action and dob_action.dob:
-            if dob_action.dob == self.debtor.date_of_birth:
-                s.identity_status = IdentityStatus.VERIFIED
-                s.phase = DialogPhase.NEGOTIATION
-                s.unclear_count = 0
-                self.audit.record(AuditType.IDENTITY_VERIFIED, self.turn_index, factor="date_of_birth")
-                d = self._record(self.policy.evaluate_disclosure(s, self.clock.now()), out)
-                self.audit.record(AuditType.DISCLOSURE_ALLOWED, self.turn_index, rule=d.rule.value)
-                s.debt_disclosed = True
-                out.state_changes += ["identity_status=VERIFIED", "debt_disclosed=true"]
-                self._plan([Act.DISCLOSE], out)
-                return out
-            s.identity_attempts += 1
-            self.audit.record(AuditType.IDENTITY_FAILED, self.turn_index, attempts=s.identity_attempts)
-            d = self._record(self.policy.evaluate_identity_attempts(s, self.clock.now()), out)
-            if not d.allowed:
-                s.identity_status = IdentityStatus.FAILED
-                out.state_changes.append("identity_status=FAILED")
-                self._end(out, "identity_verification_failed")
-                self._plan([Act.IDENTITY_FAILED], out)
-            else:
-                self._plan([Act.DOB_RETRY], out)
+        if dob_action:
+            return self._dob(dob_action, interp, out)
+        return self._pre_verification(interp, out, wants_details, self._current_question())
+
+    def _dob(self, action: ProposedAction, interp: Interpretation, out: TurnOutcome) -> TurnOutcome:
+        """Verify only a complete, real date the caller actually said (possibly across turns)."""
+        s = self.state
+        given = (
+            DobParts(action.dob.year, action.dob.month, action.dob.day)
+            if action.dob is not None
+            else DobParts(action.dob_year, action.dob_month, action.dob_day)
+        )
+        previous = s.partial_dob
+        parts = given.merged_over(previous)
+        trace = {"source": interp.source, "llm_validation_failed": "llm_validation_failed" in interp.notes}
+        if not parts.complete:
+            s.partial_dob = parts
+            self.audit.record(
+                AuditType.IDENTITY_PARTIAL_DOB,
+                self.turn_index,
+                year=parts.year,
+                month=parts.month,
+                day=parts.day,
+                missing=parts.missing,
+                merged_with_previous=previous is not None,
+                **trace,
+            )
+            out.state_changes.append(f"partial_dob_missing={','.join(parts.missing)}")
+            if parts == previous:  # no progress: count it like an unclear turn
+                return self._unclear(out, [Act.ASK_DOB_PART], dob_question=self._dob_question(parts))
+            self._plan([Act.ASK_DOB_PART], out, dob_question=self._dob_question(parts))
             return out
-        return self._pre_verification(interp, out, wants_details, [Act.ASK_DOB])
+
+        s.partial_dob = None
+        dob = parts.as_date()
+        if dob is None:  # e.g. April 31: never coerced, and not a failed attempt
+            self.audit.record(
+                AuditType.IDENTITY_INVALID_DOB,
+                self.turn_index,
+                year=parts.year,
+                month=parts.month,
+                day=parts.day,
+                reason="not a calendar date",
+                **trace,
+            )
+            self._plan([Act.DOB_INVALID], out)
+            return out
+        if dob == self.debtor.date_of_birth:
+            s.identity_status = IdentityStatus.VERIFIED
+            s.phase = DialogPhase.NEGOTIATION
+            s.unclear_count = 0
+            self.audit.record(AuditType.IDENTITY_VERIFIED, self.turn_index, factor="date_of_birth", **trace)
+            d = self._record(self.policy.evaluate_disclosure(s, self.clock.now()), out)
+            self.audit.record(AuditType.DISCLOSURE_ALLOWED, self.turn_index, rule=d.rule.value)
+            s.debt_disclosed = True
+            out.state_changes += ["identity_status=VERIFIED", "debt_disclosed=true"]
+            self._plan([Act.DISCLOSE], out)
+            return out
+        s.identity_attempts += 1
+        self.audit.record(AuditType.IDENTITY_FAILED, self.turn_index, attempts=s.identity_attempts, **trace)
+        d = self._record(self.policy.evaluate_identity_attempts(s, self.clock.now()), out)
+        if not d.allowed:
+            s.identity_status = IdentityStatus.FAILED
+            out.state_changes.append("identity_status=FAILED")
+            self._end(out, "identity_verification_failed")
+            self._plan([Act.IDENTITY_FAILED], out)
+        else:
+            self._plan([Act.DOB_RETRY], out)
+        return out
+
+    def _dob_question(self, parts: DobParts) -> str:
+        """Ask only for what is missing. Month names are fine; digits are never spoken
+        before verification (output guard) and the caller's year is not echoed back."""
+        missing = frozenset(parts.missing)
+        if self.lang == Language.JA:
+            m = f"{parts.month}月" if parts.month else ""
+            ja = {
+                frozenset({"day"}): f"ありがとうございます。{m}の何日でしょうか。",
+                frozenset({"month", "day"}): "ありがとうございます。何月何日でしょうか。",
+                frozenset({"year"}): "ありがとうございます。何年のお生まれでしょうか。",
+                frozenset({"year", "day"}): f"ありがとうございます。{m}の何日、何年のお生まれでしょうか。",
+                frozenset({"month"}): "ありがとうございます。何月でしょうか。",
+                frozenset({"year", "month"}): "ありがとうございます。何年何月でしょうか。",
+            }
+            return ja.get(missing, "ご本人確認のため、生年月日をお教えいただけますか。")
+        month = calendar.month_name[parts.month] if parts.month else ""
+        en = {
+            frozenset({"day"}): f"Thank you. And what day in {month}?",
+            frozenset({"month", "day"}): "Thank you. Could you tell me the month and day as well?",
+            frozenset({"year"}): "Thank you. And what year were you born?",
+            frozenset({"year", "day"}): f"Thank you. And which day in {month}, and what year?",
+            frozenset({"month"}): "Thank you. And which month?",
+            frozenset({"year", "month"}): "Thank you. Could you tell me the month and year as well?",
+        }
+        return en.get(missing, "Could you please tell me your full date of birth?")
 
     def _pre_verification(
         self, interp: Interpretation, out: TurnOutcome, wants_details: bool, question: list[Act]
@@ -365,12 +459,12 @@ class ConversationController:
             return out
         return self._unclear(out, question)
 
-    def _unclear(self, out: TurnOutcome, question: list[Act]) -> TurnOutcome:
+    def _unclear(self, out: TurnOutcome, question: list[Act], **slots: str) -> TurnOutcome:
         s = self.state
         s.unclear_count += 1
         if s.unclear_count >= MAX_UNCLEAR_BEFORE_TRANSFER:
             return self._transfer(out, self.clock.now(), "repeated_misunderstanding", Act.TRANSFER)
-        self._plan([Act.CLARIFY, *question], out)
+        self._plan([Act.CLARIFY, *question], out, **slots)
         return out
 
     # -- negotiation ---------------------------------------------------------------

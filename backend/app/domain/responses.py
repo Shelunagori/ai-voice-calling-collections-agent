@@ -25,6 +25,8 @@ class Act(StrEnum):
     ASK_NAME_AGAIN = "ASK_NAME_AGAIN"
     ASK_DOB = "ASK_DOB"
     DOB_RETRY = "DOB_RETRY"
+    ASK_DOB_PART = "ASK_DOB_PART"  # ask only for the missing year / month / day
+    DOB_INVALID = "DOB_INVALID"
     IDENTITY_FAILED = "IDENTITY_FAILED"
     WRONG_PARTY = "WRONG_PARTY"
     PRE_VERIFICATION = "PRE_VERIFICATION"
@@ -90,6 +92,14 @@ T: dict[Act, dict[Language, str]] = {
     Act.DOB_RETRY: {
         Language.EN: "I'm sorry, that doesn't match our records. Could you repeat your date of birth, please?",
         Language.JA: "申し訳ございません、記録と一致しませんでした。もう一度、生年月日をお願いできますか。",
+    },
+    # Rendered by the controller from the known/missing parts; never repeats digits
+    # (the pre-verification guard forbids numbers and the caller's DOB is not echoed).
+    Act.ASK_DOB_PART: {Language.EN: "{dob_question}", Language.JA: "{dob_question}"},
+    Act.DOB_INVALID: {
+        Language.EN: "I'm sorry, that doesn't seem to be a valid date. Could you tell me your date of birth again, "
+        "please?",
+        Language.JA: "申し訳ございません、日付が正しくないようです。もう一度、生年月日をお願いできますか。",
     },
     Act.IDENTITY_FAILED: {
         Language.EN: "I'm sorry, I wasn't able to verify your identity, so I can't discuss this matter. "

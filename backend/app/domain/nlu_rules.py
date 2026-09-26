@@ -19,7 +19,8 @@ import unicodedata
 from datetime import date, timedelta
 
 from .commands import Action, Interpretation, ProposedAction
-from .models import Language
+from .models import DialogPhase, DobParts, Language
+from .turn_context import TurnContext, constrain, context_for
 
 # ----------------------------------------------------------------------------------
 # keyword tables
@@ -554,16 +555,45 @@ def _find_amounts_ja(t: str) -> list[int]:
 # ----------------------------------------------------------------------------------
 
 
-def interpret(text: str, language: Language, today: date, expecting_dob: bool = False) -> Interpretation:
+def interpret(
+    text: str,
+    language: Language,
+    today: date,
+    expecting_dob: bool = False,
+    context: TurnContext | None = None,
+) -> Interpretation:
+    """Deterministic reading of one caller turn.
+
+    With a `context` (the normal runtime path) extraction is phase-aware: while identity
+    is being checked, numbers are only date-of-birth candidates (never money); once
+    negotiating, no DOB is extracted. The result is then constrained to the phase's
+    allowed actions. Without a context the legacy, unconstrained behaviour is kept.
+    """
+    if context is None and expecting_dob:
+        context = context_for(DialogPhase.IDENTITY_DOB)
     t = normalise(text)
-    actions: list[ProposedAction] = []
     if not t or is_filler_only(t):
         return Interpretation(actions=[ProposedAction(action=Action.UNCLEAR)], source="rules")
+    identity = context is not None and context.identity_phase
+    interp = _interpret(
+        t,
+        language,
+        today,
+        money=not identity,
+        dob_mode="parts" if identity else ("off" if context is not None else "legacy"),
+    )
+    return constrain(interp, context) if context is not None else interp
 
+
+def _interpret(t: str, language: Language, today: date, *, money: bool, dob_mode: str) -> Interpretation:
+    actions: list[ProposedAction] = []
     is_ja = _has_japanese(t)  # script-based: callers code-switch between languages
-    found = _find_dates_ja(t, today) if is_ja else _find_dates_en(t, today)
-    rest = _mask(t, found.spans)
-    amounts = _find_amounts_ja(rest) if is_ja else _find_amounts_en(rest)
+    if money:
+        found = _find_dates_ja(t, today) if is_ja else _find_dates_en(t, today)
+        rest = _mask(t, found.spans)
+        amounts = _find_amounts_ja(rest) if is_ja else _find_amounts_en(rest)
+    else:
+        found, amounts = _Found(), []
 
     def hit(action: Action) -> bool:
         if is_ja:
@@ -578,17 +608,26 @@ def interpret(text: str, language: Language, today: date, expecting_dob: bool = 
     if hit(Action.WRONG_PERSON):
         actions.append(ProposedAction(action=Action.WRONG_PERSON))
 
-    # date of birth: a full date in the past with a year, while identity is being checked
-    dobs = [d for d in found.dates if d.year < today.year - 15]
-    if dobs and (expecting_dob or len(found.dates) == 1):
-        actions.append(ProposedAction(action=Action.PROVIDE_DOB, dob=dobs[0]))
-    future_dates = [d for d in found.dates if d >= today]
+    dobs: list[date] = []
+    if dob_mode == "legacy":
+        # a full date in the past with a year
+        dobs = [d for d in found.dates if d.year < today.year - 15]
+        if dobs and len(found.dates) == 1:
+            actions.append(ProposedAction(action=Action.PROVIDE_DOB, dob=dobs[0]))
+    elif dob_mode == "parts":
+        dob = dob_action(parse_dob(t, language, today))
+        if dob is not None:
+            actions.append(dob)
 
-    amount = amounts[-1] if amounts else None  # last mentioned amount wins ("20k... no, 25k")
-    pay_date = future_dates[-1] if future_dates else None
-    days = found.days[-1] if found.days and pay_date is None else None
-    if (amount is not None or pay_date is not None or days is not None) and not dobs:
-        actions.append(ProposedAction(action=Action.PROPOSE_PAYMENT, amount=amount, date=pay_date, days_from_now=days))
+    if money:
+        future_dates = [d for d in found.dates if d >= today]
+        amount = amounts[-1] if amounts else None  # last mentioned amount wins ("20k... no, 25k")
+        pay_date = future_dates[-1] if future_dates else None
+        days = found.days[-1] if found.days and pay_date is None else None
+        if (amount is not None or pay_date is not None or days is not None) and not dobs:
+            actions.append(
+                ProposedAction(action=Action.PROPOSE_PAYMENT, amount=amount, date=pay_date, days_from_now=days)
+            )
 
     for act in (Action.DISPUTE, Action.REQUEST_DISCOUNT, Action.CANNOT_PAY, Action.ASK_BALANCE, Action.ASK_PURPOSE):
         if hit(act) and act not in [a.action for a in actions]:
@@ -620,6 +659,148 @@ def interpret(text: str, language: Language, today: date, expecting_dob: bool = 
     priority = {Action.STOP_CONTACT: 0, Action.REQUEST_HUMAN: 1, Action.WRONG_PERSON: 2}
     uniq.sort(key=lambda a: priority.get(a.action, 5))
     return Interpretation(actions=uniq[:3], source="rules")
+
+
+# ----------------------------------------------------------------------------------
+# date of birth (complete or partial) — only ever what the caller said
+# ----------------------------------------------------------------------------------
+
+
+def dob_action(parts: DobParts) -> ProposedAction | None:
+    """PROVIDE_DOB for a complete real date, otherwise PARTIAL_DOB with only the given parts."""
+    d = parts.as_date()
+    if d is not None:
+        return ProposedAction(action=Action.PROVIDE_DOB, dob=d)
+    if parts.has_any:
+        return ProposedAction(action=Action.PARTIAL_DOB, dob_year=parts.year, dob_month=parts.month, dob_day=parts.day)
+    return None
+
+
+def dob_parts_of(a: ProposedAction) -> DobParts:
+    if a.dob is not None:
+        return DobParts(a.dob.year, a.dob.month, a.dob.day)
+    return DobParts(a.dob_year, a.dob_month, a.dob_day)
+
+
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+    "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12, "thirteenth": 13, "fourteenth": 14,
+    "fifteenth": 15, "sixteenth": 16, "seventeenth": 17, "eighteenth": 18, "nineteenth": 19, "twentieth": 20,
+    "thirtieth": 30,
+}  # fmt: skip
+for _i, _w in enumerate(["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"], 1):
+    _ORDINAL_WORDS[f"twenty-{_w}"] = 20 + _i
+    _ORDINAL_WORDS[f"twenty {_w}"] = 20 + _i
+_ORDINAL_WORDS["thirty-first"] = _ORDINAL_WORDS["thirty first"] = 31
+_ORD_RE = "|".join(sorted((re.escape(k) for k in _ORDINAL_WORDS), key=len, reverse=True))
+_DAY_TOKEN = rf"(?:(\d{{1,2}})(?:st|nd|rd|th)?(?!\d)|({_ORD_RE}))"
+# Abbreviations and "may" are only months next to a number ("may I ask" is not May).
+_AMBIGUOUS_MONTHS = {"may", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec"}
+_TEENS = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
+_TENS = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
+_ONES = "one|two|three|four|five|six|seven|eight|nine"
+_SPELLED_YEAR = re.compile(
+    rf"\b(nineteen|twenty)[\s-]+((?:{_TEENS})|(?:{_TENS})(?:[\s-]+(?:{_ONES}))?|oh[\s-]+(?:{_ONES}))\b"
+    rf"|\btwo thousand(?:[\s-]+and)?(?:[\s-]+((?:{_TEENS})|(?:{_ONES})))?\b"
+)
+
+
+def _day_value(num: str | None, word: str | None) -> int | None:
+    v = int(num) if num else _ORDINAL_WORDS.get(word or "")
+    return v if v is not None and 1 <= v <= 31 else None
+
+
+def _valid_year(y: int, today: date) -> int | None:
+    return y if 1900 <= y <= today.year else None
+
+
+def _dob_en(t: str, today: date) -> DobParts:
+    m = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", t)
+    if m:
+        y, mo, d = int(m[1]), int(m[2]), int(m[3])
+        if _valid_year(y, today) and 1 <= mo <= 12 and 1 <= d <= 31:
+            return DobParts(y, mo, d)
+
+    year: int | None = None
+    for ym in re.finditer(r"(?<![\d,])(1[89]\d{2}|20\d{2})(?![\d,])", t):
+        year = _valid_year(int(ym[1]), today) or year
+    if year is None:
+        for sm in _SPELLED_YEAR.finditer(t):
+            if sm[1]:
+                v = _words_to_int(sm[2].replace("oh", "").strip(" -"))
+                spelled = (1900 if sm[1] == "nineteen" else 2000) + v if v is not None else None
+            else:
+                spelled = 2000 + (_words_to_int(sm[3]) or 0 if sm[3] else 0)
+            if spelled is not None:
+                year = _valid_year(spelled, today) or year
+
+    month: int | None = None
+    month_span: tuple[int, int] | None = None
+    for mm in re.finditer(rf"\b({_MONTH_RE})\b\.?", t):
+        name = mm[1]
+        if name in _AMBIGUOUS_MONTHS:
+            around = t[max(0, mm.start() - 14) : mm.end() + 14]
+            if not re.search(rf"\d|{_ORD_RE}", around):
+                continue
+        month, month_span = _MONTHS[name], mm.span()
+
+    day: int | None = None
+    if month_span is not None:
+        after = t[month_span[1] :]
+        before = t[: month_span[0]]
+        a = re.match(rf"\s*(?:the\s+)?{_DAY_TOKEN}", after)
+        b = re.search(rf"{_DAY_TOKEN}\s*(?:of\s+)?(?:the\s+month\s+of\s+)?$", before)
+        for cand in (a, b):
+            if cand and day is None:
+                day = _day_value(cand[1], cand[2])  # (?!\d) keeps "April 1988" from reading 19 as a day
+    if day is None:
+        sm2 = re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)\b|\bthe\s+(\d{{1,2}})(?!\d)|\bthe\s+({_ORD_RE})\b", t)
+        if sm2:
+            day = _day_value(sm2[1] or sm2[2], sm2[3])
+    return DobParts(year, month, day)
+
+
+_JA_NUM_DOB = r"([0-9〇零一二三四五六七八九十百千]+|元)"
+
+
+def _ja_int(s: str) -> int | None:
+    if s == "元":
+        return 1
+    if s and all(ch in _KANJI_DIGITS for ch in s) and len(s) > 1:  # 一九八八
+        return int("".join(str(_KANJI_DIGITS[ch]) for ch in s))
+    return _ja_number(s)
+
+
+def _dob_ja(t: str, today: date) -> DobParts:
+    m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", t)
+    if m:
+        return DobParts(_valid_year(int(m[1]), today), int(m[2]) if 1 <= int(m[2]) <= 12 else None,
+                        int(m[3]) if 1 <= int(m[3]) <= 31 else None)  # fmt: skip
+    era = {"昭和": 1925, "平成": 1988, "令和": 2018}
+    year = month = day = None
+    em = re.search(r"(昭和|平成|令和)" + _JA_NUM_DOB + "年", t)
+    if em:
+        n = _ja_int(em[2])
+        year = _valid_year(era[em[1]] + n, today) if n else None
+    else:
+        ym = re.search(_JA_NUM_DOB + "年", t)
+        n = _ja_int(ym[1]) if ym else None
+        year = _valid_year(n, today) if n else None
+    mm = re.search(r"(?<![ヶかカケ])" + _JA_NUM_DOB + "月(?!曜)", t)
+    if mm:
+        n = _ja_int(mm[1])
+        month = n if n and 1 <= n <= 12 else None
+    dm = re.search(_JA_NUM_DOB + "日(?!間)", t)
+    if dm:
+        n = _ja_int(dm[1])
+        day = n if n and 1 <= n <= 31 else None
+    return DobParts(year, month, day)
+
+
+def parse_dob(text: str, language: Language, today: date) -> DobParts:
+    """Year / month / day the caller explicitly said. Missing parts stay None."""
+    t = normalise(text)
+    return _dob_ja(t, today) if _has_japanese(t) else _dob_en(t, today)
 
 
 def safety_intents(text: str, language: Language) -> list[Action]:

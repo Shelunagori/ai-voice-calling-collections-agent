@@ -540,9 +540,8 @@ class VoiceSession:
         self.turns.append(caller_turn)
         try:
             lat.mark("nlu_start", self._mono())
-            res = await self.d.understanding.interpret(
-                text, self.c.lang, self.c.today(), self.c.state.phase, self.c.last_agent_text
-            )
+            ctx = self.c.turn_context()  # phase-constrained: allowed actions + expected slot
+            res = await self.d.understanding.interpret(text, self.c.lang, self.c.today(), ctx, self.c.last_agent_text)
             lat.mark("nlu_done", self._mono())
             async with self._lock:
                 self._applied = True
@@ -554,9 +553,27 @@ class VoiceSession:
                         stage="nlu",
                         error=res.llm_error,
                         fallback="rules",
+                        fallback_constrained_to=ctx.expected_slot.value,
+                    )
+                elif res.llm_validation_failed:
+                    self.c.audit.record(
+                        AuditType.LLM_PROPOSAL_REJECTED,
+                        self.c.turn_index + 1,
+                        reason="schema_validation",
+                        expected_slot=ctx.expected_slot.value,
+                        notes=res.notes,
                     )
                 outcome = self.c.apply(res.interpretation, text)
             lat.mark("policy_done", self._mono())
+            self._log(
+                "nlu_result",
+                expected_slot=ctx.expected_slot.value,
+                actions=[a.value for a in res.interpretation.names],
+                source=res.interpretation.source,
+                llm_used=res.llm_used,
+                llm_validation_failed=res.llm_validation_failed,
+                notes=res.notes,
+            )
             caller_turn.intent = ",".join(a.value for a in res.interpretation.names)
             self.emit(
                 "turn.caller",

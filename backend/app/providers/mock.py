@@ -15,7 +15,9 @@ from datetime import date
 from typing import Any
 
 from ..domain import nlu_rules
-from ..domain.models import Language
+from ..domain.commands import Action
+from ..domain.models import DialogPhase, Language
+from ..domain.turn_context import context_for
 from ..voice.vad import EnergyVAD, VADEventType
 from .base import (
     CallHandle,
@@ -61,9 +63,15 @@ class MockLLM:
         m = re.search(r"Today is (\d{4}-\d{2}-\d{2})", system)
         today = date.fromisoformat(m[1]) if m else date.today()
         lang = Language.JA if "Japanese" in system else Language.EN
-        expecting_dob = "IDENTITY_DOB" in system
-        interp = nlu_rules.interpret(user, lang, today, expecting_dob=expecting_dob)
-        return json.loads(interp.model_dump_json(exclude={"source"}, exclude_none=True))
+        step = re.search(r"Current step: ([A-Z_]+)", system)
+        ctx = context_for(DialogPhase(step[1])) if step and step[1] in DialogPhase.__members__ else None
+        interp = nlu_rules.interpret(user, lang, today, context=ctx)
+        partial = interp.first(Action.PARTIAL_DOB)
+        if self.failure == "partial_dob_string" and partial and partial.dob_year:
+            # What Cloudflare returned on the real call: a partial date squeezed into `dob`.
+            dob = f"{partial.dob_year}" + (f"-{partial.dob_month:02d}" if partial.dob_month else "")
+            return {"actions": [{"action": "PROVIDE_DOB", "dob": dob}]}
+        return json.loads(interp.model_dump_json(exclude={"source", "notes"}, exclude_none=True))
 
     async def stream_text(self, system: str, user: str, *, timeout: float) -> AsyncIterator[str]:
         self.calls.append({"kind": "stream", "user": user})

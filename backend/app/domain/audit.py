@@ -20,6 +20,8 @@ class AuditType(StrEnum):
     IDENTITY_NAME_CONFIRMED = "identity.name_confirmed"
     IDENTITY_VERIFIED = "identity.verified"
     IDENTITY_FAILED = "identity.failed"
+    IDENTITY_PARTIAL_DOB = "identity.partial_dob"
+    IDENTITY_INVALID_DOB = "identity.invalid_dob"
     IDENTITY_WRONG_PARTY = "identity.wrong_party"
     DISCLOSURE_ALLOWED = "disclosure.allowed"
     DISCLOSURE_BLOCKED = "disclosure.blocked"
@@ -35,6 +37,7 @@ class AuditType(StrEnum):
     PROVIDER_FAILURE = "provider.failure"
     RESPONSE_GUARD_BLOCKED = "response.guard_blocked"
     LLM_PROPOSAL_REJECTED = "llm.proposal_rejected"
+    NLU_OUT_OF_PHASE = "nlu.action_out_of_phase"
 
 
 @dataclass(frozen=True)
