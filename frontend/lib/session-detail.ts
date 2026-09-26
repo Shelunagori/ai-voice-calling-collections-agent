@@ -1,5 +1,5 @@
 // Client-side loader for the session audit detail. Talks only to this app's own
-// /api/operator/* routes (same origin, cookie-based); it never sees OPERATOR_TOKEN.
+// /api/operator/* routes (same origin); the server adds OPERATOR_TOKEN, the browser never sees it.
 
 export type Row = Record<string, unknown>;
 export type TurnRow = {
@@ -26,7 +26,6 @@ export type SessionDetail = {
 export type DetailErrorCode =
   | "invalid_session_id"
   | "not_found"
-  | "operator_sign_in_required"
   | "operator_not_configured"
   | "operator_token_rejected"
   | "backend_error"
@@ -42,8 +41,7 @@ export type DetailResult =
 const MESSAGES: Record<DetailErrorCode, string> = {
   invalid_session_id: "That is not a valid session id.",
   not_found: "Session not found. It may have been purged by the retention policy.",
-  operator_sign_in_required: "This is a phone-call session. Sign in as operator to open its audit trail.",
-  operator_not_configured: "Phone-call audit trails need operator sign-in, which is not configured on this deployment (OPERATOR_TOKEN / OPERATOR_CONSOLE_PASSWORD on the frontend server).",
+  operator_not_configured: "Phone-call audit trails need OPERATOR_TOKEN on the frontend server; it is not configured on this deployment.",
   operator_token_rejected: "The backend rejected the console's operator token. Check that OPERATOR_TOKEN is identical on Vercel and Railway.",
   backend_error: "The backend returned an error. Try again shortly.",
   backend_unreachable: "The backend could not be reached. Try again shortly.",
@@ -81,39 +79,4 @@ function isDetail(d: unknown): d is SessionDetail {
   if (!d || typeof d !== "object") return false;
   const x = d as Record<string, unknown>;
   return !!x.session && typeof x.session === "object" && Array.isArray(x.turns) && Array.isArray(x.audit) && Array.isArray(x.latency);
-}
-
-export type OperatorStatus = { configured: boolean; signed_in: boolean };
-
-export async function operatorStatus(fetchImpl: FetchLike = fetch): Promise<OperatorStatus> {
-  try {
-    const r = await fetchImpl("/api/operator/session", { cache: "no-store", credentials: "same-origin" });
-    const b = (await r.json()) as Partial<OperatorStatus>;
-    return { configured: !!b.configured, signed_in: !!b.signed_in };
-  } catch {
-    return { configured: false, signed_in: false };
-  }
-}
-
-export async function operatorSignIn(password: string, fetchImpl: FetchLike = fetch): Promise<{ ok: boolean; message?: string }> {
-  try {
-    const r = await fetchImpl("/api/operator/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ password }),
-    });
-    const b = (await r.json().catch(() => ({}))) as { ok?: boolean; detail?: string };
-    return r.ok && b.ok ? { ok: true } : { ok: false, message: b.detail || `Sign-in failed (HTTP ${r.status}).` };
-  } catch {
-    return { ok: false, message: "Network error during sign-in." };
-  }
-}
-
-export async function operatorSignOut(fetchImpl: FetchLike = fetch): Promise<void> {
-  try {
-    await fetchImpl("/api/operator/session", { method: "DELETE", credentials: "same-origin" });
-  } catch {
-    /* ignore */
-  }
 }

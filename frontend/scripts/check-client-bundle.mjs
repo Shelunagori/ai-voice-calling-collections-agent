@@ -1,5 +1,5 @@
-// Builds the app with canary values for the server-only secrets, then fails if either
-// value appears anywhere the browser can receive it (static JS/CSS chunks, prerendered
+// Builds the app with a canary value for the server-only OPERATOR_TOKEN, then fails if it
+// appears anywhere the browser can receive it (static JS/CSS chunks, prerendered
 // HTML/RSC payloads). Usage: npm run check:bundle
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
@@ -8,7 +8,6 @@ import path from "node:path";
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const canaries = {
   OPERATOR_TOKEN: `canary-operator-token-${process.pid}-${Date.now()}`,
-  OPERATOR_CONSOLE_PASSWORD: `canary-console-password-${process.pid}-${Date.now()}`,
 };
 
 const build = spawnSync("npx", ["next", "build"], { cwd: root, stdio: "inherit", env: { ...process.env, ...canaries } });

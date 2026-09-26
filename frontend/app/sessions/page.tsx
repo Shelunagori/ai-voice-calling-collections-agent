@@ -3,17 +3,10 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { OperatorSignIn } from "@/components/audit/OperatorSignIn";
 import { SessionDetailView } from "@/components/audit/SessionDetailView";
 import { getJSON } from "@/lib/api";
 import { shortTime } from "@/lib/format";
-import {
-  DetailResult,
-  loadSessionDetail,
-  operatorSignOut,
-  operatorStatus,
-  OperatorStatus,
-} from "@/lib/session-detail";
+import { DetailResult, loadSessionDetail } from "@/lib/session-detail";
 
 type Row = Record<string, string | number | boolean | null>;
 
@@ -69,7 +62,7 @@ function List() {
         </tbody>
       </table>
       {rows.length === 0 && !err && <p className="muted small">No sessions yet — start one in the voice demo.</p>}
-      <p className="muted small">Phone-call audit trails open after operator sign-in; browser-demo sessions open for everyone.</p>
+      <p className="muted small">Browser and phone sessions both open here; phone-session detail is fetched server-side with the operator token.</p>
     </div>
   );
 }
@@ -77,19 +70,18 @@ function List() {
 function DetailView({ id }: { id: string }) {
   const [attempt, setAttempt] = useState(0);
   const key = `${id}#${attempt}`;
-  const [loaded, setLoaded] = useState<{ key: string; res: DetailResult; status: OperatorStatus } | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; res: DetailResult } | null>(null);
   useEffect(() => {
     let live = true;
-    void Promise.all([loadSessionDetail(id), operatorStatus()]).then(([res, status]) => {
-      if (live) setLoaded({ key, res, status });
+    void loadSessionDetail(id).then((res) => {
+      if (live) setLoaded({ key, res });
     });
     return () => {
       live = false;
     };
   }, [id, key]);
-  const load = useCallback(() => setAttempt((n) => n + 1), []);
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
   const res = loaded?.key === key ? loaded.res : null;
-  const status = loaded?.key === key ? loaded.status : null;
 
   if (!res) return <div className="muted" role="status">Loading session…</div>;
   if (res.kind === "error") {
@@ -98,10 +90,9 @@ function DetailView({ id }: { id: string }) {
         <div className="banner" role="alert" data-testid="detail-error" data-code={res.code}>
           {res.message} {res.status ? <span className="muted mono">(HTTP {res.status})</span> : null}
         </div>
-        {res.code === "operator_sign_in_required" && <OperatorSignIn onSignedIn={load} />}
-        {res.code !== "operator_sign_in_required" && res.code !== "not_found" && (
+        {res.code !== "not_found" && (
           <div>
-            <button className="btn" onClick={load}>
+            <button className="btn" onClick={reload}>
               Retry
             </button>
           </div>
@@ -111,19 +102,11 @@ function DetailView({ id }: { id: string }) {
   }
   return (
     <div className="stack">
-      {status?.signed_in && (
-        <div className="row small">
-          <span className="pill ok">operator signed in</span>
-          <button
-            className="btn sm"
-            onClick={() => {
-              void operatorSignOut().then(load);
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-      )}
+      <div className="row">
+        <button className="btn sm" onClick={reload}>
+          Refresh
+        </button>
+      </div>
       <SessionDetailView id={id} d={res.detail} operator={res.operator} />
     </div>
   );
