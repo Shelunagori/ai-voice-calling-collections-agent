@@ -1,0 +1,20 @@
+{
+  "description": "Audio regression fixtures for STT/turn-taking evaluation. 'synthetic_signal' fixtures are generated deterministically (no speech content) and exercise VAD/end-of-turn/barge-in. 'speech' fixtures need a WAV file (16 kHz mono PCM16) under fixtures/audio/wav/ — either recorded by a consenting speaker or generated with `python -m app.evaluation.audio_bench generate` (TTS-generated speech, clearly not real caller audio). No accuracy numbers are claimed until the benchmark has actually been run.",
+  "fixtures": [
+    {"id": "sig_clean_turn", "kind": "synthetic_signal", "category": "clean", "recipe": [["silence", 0.3], ["speech", 0.8], ["silence", 1.0]], "expect": {"segments": 1}},
+    {"id": "sig_background_noise", "kind": "synthetic_signal", "category": "background_noise", "recipe": [["noise", 3.0]], "expect": {"segments": 0}},
+    {"id": "sig_speech_over_noise", "kind": "synthetic_signal", "category": "background_noise", "recipe": [["noise_bed", 3.0], ["silence", 1.0], ["speech", 0.8], ["silence", 1.2]], "expect": {"segments": 1}},
+    {"id": "sig_short_pause", "kind": "synthetic_signal", "category": "short_pause", "recipe": [["silence", 0.3], ["speech", 0.6], ["silence", 0.15], ["speech", 0.6], ["silence", 0.6]], "expect": {"segments": 1}},
+    {"id": "sig_long_pause", "kind": "synthetic_signal", "category": "long_pause", "recipe": [["silence", 0.3], ["speech", 0.6], ["silence", 1.2], ["speech", 0.6], ["silence", 0.6]], "expect": {"segments": 2}},
+    {"id": "sig_click", "kind": "synthetic_signal", "category": "interruption", "recipe": [["silence", 0.3], ["speech", 0.06], ["silence", 0.6]], "expect": {"segments": 0}},
+
+    {"id": "en_amount_date", "kind": "speech", "category": "numbers", "language": "en", "text": "I can pay thirty thousand yen on October fifteenth.", "entities": {"amount": 30000, "date_md": [10, 15]}},
+    {"id": "en_dob", "kind": "speech", "category": "dates", "language": "en", "text": "My date of birth is April twelfth, nineteen eighty eight.", "entities": {"dob": "1988-04-12"}},
+    {"id": "en_stop", "kind": "speech", "category": "clean", "language": "en", "text": "Please stop calling me.", "entities": {"intent": "STOP_CONTACT"}},
+    {"id": "ja_amount", "kind": "speech", "category": "currency", "language": "ja", "text": "十月十五日に三万円払えます。", "entities": {"amount": 30000, "date_md": [10, 15]}},
+    {"id": "ja_dob", "kind": "speech", "category": "dates", "language": "ja", "text": "生年月日は一九八八年四月十二日です。", "entities": {"dob": "1988-04-12"}},
+    {"id": "ja_name", "kind": "speech", "category": "japanese_names", "language": "ja", "text": "はい、佐藤陽翔です。", "entities": {"name": "佐藤"}},
+    {"id": "ja_amount_noisy", "kind": "speech", "category": "background_noise", "language": "ja", "text": "二週間後に二万五千円なら払えます。", "noise_amp": 0.02, "entities": {"amount": 25000}},
+    {"id": "ja_human", "kind": "speech", "category": "clean", "language": "ja", "text": "担当者と話したいです。", "entities": {"intent": "REQUEST_HUMAN"}}
+  ]
+}
