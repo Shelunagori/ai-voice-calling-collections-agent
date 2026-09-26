@@ -15,7 +15,7 @@ describe("loadSessionDetail", () => {
     expect(init.credentials).toBe("same-origin");
   });
   it.each([
-    [401, '{"ok":false,"code":"operator_sign_in_required"}', "operator_sign_in_required"],
+    [503, '{"ok":false,"code":"operator_not_configured"}', "operator_not_configured"],
     [404, '{"ok":false,"code":"not_found"}', "not_found"],
     [500, "Internal Server Error", "backend_error"],
     [200, "{bad", "malformed_response"],

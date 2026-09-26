@@ -225,6 +225,14 @@ def test_outbound_call_guardrails(tclient):
     assert r.json()["status"] == "blocked_by_policy" and len(tclient.tel.calls) == n
 
 
+def test_outbound_call_endpoint_rejects_missing_or_wrong_token(tclient):
+    """The Vercel proxy adds the token server-side; the Railway endpoint itself stays protected."""
+    body = {"to": "+819012345678", "scenario": "A", "language": "en"}
+    assert tclient.post("/api/operator/calls", json=body).status_code == 401
+    assert tclient.post("/api/operator/calls", json=body, headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert not tclient.tel.calls
+
+
 def test_media_stream_session(tclient):
     twiml = signed_post(tclient, "/telephony/twilio/voice", {"CallSid": "CA9", "From": "+819012345678"}).text
     assert "<Connect><Stream" in twiml
