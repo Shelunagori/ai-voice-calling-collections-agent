@@ -7,6 +7,7 @@ Every external dependency is optional. Missing credentials degrade the capabilit
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from typing import Literal
 
@@ -27,7 +28,10 @@ class Settings(BaseSettings):
     # Persistence. Local default is a SQLite file so the deterministic system runs with
     # zero infrastructure; production uses PostgreSQL via DATABASE_URL.
     database_url: str = "sqlite+aiosqlite:///./local.db"
-    auto_migrate: bool = True
+    auto_migrate: bool = True  # run `alembic upgrade head` on startup
+    # Emergency/dev escape hatch ONLY: lets production/staging start on a non-durable
+    # database (logged CRITICAL). Never on by default; not for normal production use.
+    allow_ephemeral_database: bool = False
     seed_demo_data: bool = True
     transcript_retention_days: int = 30
 
@@ -102,7 +106,24 @@ class Settings(BaseSettings):
             v = "postgresql://" + v[len("postgres://") :]
         if v.startswith("postgresql://"):
             v = "postgresql+asyncpg://" + v[len("postgresql://") :]
+        if v.startswith("postgresql+asyncpg://") and "sslmode=" in v:
+            # libpq's sslmode is not an asyncpg argument; asyncpg takes ssl=<mode>.
+            v = re.sub(r"([?&])sslmode=", r"\1ssl=", v)
         return v
+
+    @property
+    def database_backend(self) -> str:
+        """'postgresql' | 'sqlite' | 'other' — safe to expose (no host, no credentials)."""
+        if self.database_url.startswith("postgresql"):
+            return "postgresql"
+        if self.database_url.startswith("sqlite"):
+            return "sqlite"
+        return "other"
+
+    @property
+    def database_durable(self) -> bool:
+        """Survives a container restart/redeploy. A SQLite file lives inside the container."""
+        return self.database_backend == "postgresql"
 
     # ---- derived capability flags -------------------------------------------------
     @property

@@ -41,6 +41,7 @@ class AppState:
     repo: Repository
     providers: Providers
     db_mode: str = "unknown"
+    db_revision: str | None = None
     started_at: float = field(default_factory=time.monotonic)
     sessions: dict[uuid.UUID, VoiceSession] = field(default_factory=dict)
     pending_calls: dict[str, dict[str, Any]] = field(default_factory=dict)  # session_id -> outbound call context

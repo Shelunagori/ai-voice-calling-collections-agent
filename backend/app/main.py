@@ -18,7 +18,7 @@ from .api import routes, telephony, ws_browser
 from .config import Settings, get_settings
 from .domain.clock import Clock, SystemClock
 from .observability import configure_logging, correlation_id, metrics
-from .persistence.db import init_schema, make_engine
+from .persistence.db import check_persistence, init_schema, make_engine, verify_schema
 from .persistence.repository import Repository
 from .providers.factory import build_providers
 from .runtime import Providers
@@ -38,18 +38,35 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if s.app_env != "test":
             configure_logging(s.log_level)
+        check_persistence(s)  # production/staging must not run on an ephemeral database
         engine = make_engine(s.database_url)
         db_mode = await init_schema(engine, s.database_url, s.auto_migrate)
+        db_revision = await verify_schema(engine, s, db_mode)
         repo = Repository(engine)
         if s.seed_demo_data:
             await repo.seed_demo_data()
         provs = providers or build_providers(s)
         state = AppState(
-            settings=s, repo=repo, providers=provs, db_mode=db_mode, policy_clock=policy_clock or SystemClock()
+            settings=s,
+            repo=repo,
+            providers=provs,
+            db_mode=db_mode,
+            db_revision=db_revision,
+            policy_clock=policy_clock or SystemClock(),
         )
         app.state.app_state = state
         purge = asyncio.create_task(_retention_loop(repo))
-        log.info("startup", extra={"providers": provs.labels, "db_mode": db_mode, "env": s.app_env})
+        log.info(
+            "startup",
+            extra={
+                "providers": provs.labels,
+                "db_mode": db_mode,
+                "db_backend": s.database_backend,
+                "db_durable": s.database_durable,
+                "db_revision": db_revision,
+                "env": s.app_env,
+            },
+        )
         try:
             yield
         finally:

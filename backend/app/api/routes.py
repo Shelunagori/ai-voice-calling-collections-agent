@@ -65,7 +65,14 @@ async def ready(state: AppState = Depends(get_state)) -> Any:
     ok = True
     try:
         await state.repo.ping()
-        deps["database"] = {"status": "ok", "mode": state.db_mode}
+        # Backend type, durability and schema revision only: never the URL, host or credentials.
+        deps["database"] = {
+            "status": "ok",
+            "mode": state.db_mode,
+            "backend": state.settings.database_backend,
+            "durable": state.settings.database_durable,
+            "revision": state.db_revision,
+        }
     except Exception as e:
         ok = False
         deps["database"] = {"status": "error", "error": type(e).__name__}
