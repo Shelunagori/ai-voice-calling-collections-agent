@@ -47,7 +47,7 @@ describe("audio", () => {
     const v = new DataView(buf);
     v.setUint32(0, 7, false);
     v.setInt16(4, 1000, true);
-    const f = parseAudioFrame(buf);
+    const f = parseAudioFrame(buf)!;
     expect(f.generation).toBe(7);
     expect(f.pcm[0]).toBe(1000);
   });
