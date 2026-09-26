@@ -356,7 +356,11 @@ class ConversationController:
         )
         previous = s.partial_dob
         parts = given.merged_over(previous)
-        trace = {"source": interp.source, "llm_validation_failed": "llm_validation_failed" in interp.notes}
+        trace = {
+            "source": interp.source,
+            "llm_validation_failed": "llm_validation_failed" in interp.notes,
+            "nlu_notes": interp.notes[:8],  # e.g. llm_partial_dob_normalised, llm_dob_field_not_in_transcript
+        }
         if not parts.complete:
             s.partial_dob = parts
             self.audit.record(
