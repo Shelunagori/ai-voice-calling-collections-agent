@@ -18,7 +18,15 @@ const STATES = ["IDLE", "LISTENING", "USER_SPEAKING", "PROCESSING", "AGENT_SPEAK
 
 export function TranscriptPanel({ items, partial, lang }: { items: TranscriptItem[]; partial: string; lang: string }) {
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ block: "nearest" }), [items.length, partial]);
+  useEffect(() => {
+    // Block body on purpose: Chrome 14x's scrollIntoView() returns a Promise, and an
+    // expression-bodied effect would hand it to React as a "cleanup" -> route crash.
+    try {
+      void end.current?.scrollIntoView({ block: "nearest" });
+    } catch {
+      /* autoscroll is cosmetic */
+    }
+  }, [items.length, partial]);
   return (
     <div className="panel">
       <div className="panel-head">

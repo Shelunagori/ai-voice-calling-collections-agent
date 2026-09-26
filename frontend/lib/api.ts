@@ -2,8 +2,14 @@
 // secret: all provider credentials stay on the server.
 export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
-export function wsUrl(path: string): string {
-  return API_BASE.replace(/^http/, "ws") + path;
+/** WebSocket URL on the *backend* host (never the frontend origin): http->ws, https->wss. */
+export function wsUrl(path: string, base: string = API_BASE): string {
+  const u = new URL(base);
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error(`unsupported API base ${base}`);
+  const proto = u.protocol === "https:" ? "wss:" : "ws:";
+  const prefix = u.pathname.replace(/\/+$/, "");
+  const rel = path.startsWith("/") ? path : `/${path}`;
+  return `${proto}//${u.host}${prefix}${rel}`;
 }
 
 export async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {

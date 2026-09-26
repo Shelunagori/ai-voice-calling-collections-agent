@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { AgentStatePanel, CollectionPanel, LatencyPanel, PolicyPanel, TranscriptPanel } from "@/components/console/Panels";
 import { useCapabilities } from "@/components/StatusStrip";
-import { MicCapture, PcmPlayer, parseAudioFrame } from "@/lib/audio";
 import { getJSON, Scenario, wsUrl } from "@/lib/api";
+import { SessionManager, browserDeps } from "@/lib/voice-client";
 import { yen } from "@/lib/format";
 import { initialState, reduce } from "@/lib/session";
 
@@ -20,10 +20,9 @@ export default function DemoPage() {
   const [speakMock, setSpeakMock] = useState(true);
   const [draft, setDraft] = useState("");
   const [state, dispatch] = useReducer(reduce, initialState);
-  const ws = useRef<WebSocket | null>(null);
-  const player = useRef<PcmPlayer | null>(null);
-  const mic = useRef<MicCapture | null>(null);
-  const [micError, setMicError] = useState<string | null>(null);
+  const manager = useRef<SessionManager | null>(null);
+  const starting = useRef(false);
+  const [notices, setNotices] = useState<string[]>([]);
 
   useEffect(() => {
     getJSON<Scenario[]>("/api/scenarios").then(setScenarios).catch(() => setScenarios([]));
@@ -34,77 +33,83 @@ export default function DemoPage() {
   const live = state.status === "live" || state.status === "connecting";
   const mockTts = !cap?.real_tts;
 
-  const teardown = useCallback(() => {
-    mic.current?.stop();
-    mic.current = null;
-    player.current?.close();
-    player.current = null;
-    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+  const getManager = useCallback(() => {
+    if (!manager.current) manager.current = new SessionManager(browserDeps());
+    return manager.current;
   }, []);
 
-  useEffect(() => () => {
-    ws.current?.close();
-    teardown();
-  }, [teardown]);
+  useEffect(() => {
+    return () => {
+      manager.current?.stop();
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
 
   // Voice mock replies locally when the server TTS is the silent mock (clearly labelled).
   const lastSpoken = useRef<string>("");
   useEffect(() => {
-    if (!mockTts || !speakMock || typeof window === "undefined" || !window.speechSynthesis) return;
+    if (!mockTts || !speakMock || typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return;
     const last = [...state.transcript].reverse().find((t) => t.speaker === "agent");
     if (!last || last.key === lastSpoken.current || last.interrupted) return;
     lastSpoken.current = last.key;
-    const u = new SpeechSynthesisUtterance(last.text);
-    u.lang = lang === "ja" ? "ja-JP" : "en-US";
-    window.speechSynthesis.speak(u);
+    try {
+      const u = new SpeechSynthesisUtterance(last.text);
+      u.lang = lang === "ja" ? "ja-JP" : "en-US";
+      window.speechSynthesis.speak(u);
+    } catch (e) {
+      console.error("[voice-demo] speech synthesis failed", e);
+    }
   }, [state.transcript, mockTts, speakMock, lang]);
 
   async function start() {
-    setMicError(null);
+    // Guard against double clicks / retries: one connect at a time; the manager tears down any
+    // previous session (socket, mic, player) and ignores its late callbacks.
+    if (starting.current) return;
+    starting.current = true;
+    setNotices([]);
     dispatch({ kind: "connecting" });
-    player.current = new PcmPlayer(16000);
-    await player.current.resume().catch(() => undefined);
-    const sock = new WebSocket(wsUrl(`/ws/session?scenario=${scenarioKey}&lang=${lang}&mode=${mode}`));
-    sock.binaryType = "arraybuffer";
-    ws.current = sock;
-    sock.onmessage = (m) => {
-      if (m.data instanceof ArrayBuffer) {
-        const { generation, pcm } = parseAudioFrame(m.data);
-        player.current?.play(generation, pcm);
+    try {
+      let url: string;
+      try {
+        url = wsUrl(`/ws/session?scenario=${encodeURIComponent(scenarioKey)}&lang=${lang}&mode=${mode}`);
+      } catch (e) {
+        console.error("[voice-demo] bad API base URL", e);
+        setNotices(["The demo is misconfigured (invalid NEXT_PUBLIC_API_BASE_URL)."]);
+        dispatch({ kind: "socket_closed", reason: "config_error" });
         return;
       }
-      const ev = JSON.parse(m.data as string);
-      if (ev.type === "audio.clear") {
-        player.current?.clear(ev.generation);
-        window.speechSynthesis?.cancel();
-        return;
-      }
-      dispatch({ kind: "event", event: ev });
-      if (ev.type === "session.created" && ev.input_mode === "voice") {
-        const m2 = new MicCapture();
-        mic.current = m2;
-        m2.start((pcm) => sock.readyState === WebSocket.OPEN && sock.send(pcm)).catch((e: Error) => setMicError(e.message));
-      }
-    };
-    sock.onclose = (e) => {
-      dispatch({ kind: "socket_closed", reason: e.reason || undefined });
-      teardown();
-    };
+      await getManager().start({
+        url,
+        onEvent: (event) => dispatch({ kind: "event", event }),
+        onNotice: (m) => setNotices((n) => (n.includes(m) ? n : [...n.slice(-3), m])),
+        onClosed: (reason) => dispatch({ kind: "socket_closed", reason }),
+      });
+    } catch (e) {
+      // Defensive: the manager never throws, but a failure here must not reach React.
+      console.error("[voice-demo] start failed", e);
+      setNotices(["Could not start the session. Please retry."]);
+      dispatch({ kind: "socket_closed", reason: "start_failed" });
+    } finally {
+      starting.current = false;
+    }
   }
 
   function send(text: string) {
-    if (!text.trim() || ws.current?.readyState !== WebSocket.OPEN) return;
-    const clean = text.replace(/^\[interrupt\]\s*/, "");
-    ws.current.send(JSON.stringify({ type: "text", text: clean }));
-    setDraft("");
+    const clean = text.replace(/^\[interrupt\]\s*/, "").trim();
+    if (!clean) return;
+    if (getManager().sendText(clean)) setDraft("");
   }
 
   function interrupt() {
-    ws.current?.send(JSON.stringify({ type: "interrupt" }));
+    getManager().send({ type: "interrupt" });
   }
 
   function end() {
-    ws.current?.send(JSON.stringify({ type: "end" }));
+    getManager().send({ type: "end" });
   }
 
   const script = scenario ? (lang === "ja" ? scenario.script_ja : scenario.script_en) : [];
@@ -159,8 +164,8 @@ export default function DemoPage() {
                 synthesis (local stand-in; server TTS is the mock)
               </label>
             )}
-            <button className="btn primary" onClick={start} disabled={!scenario}>
-              Start voice session
+            <button className="btn primary" onClick={() => void start()} disabled={!scenario || state.status === "connecting"}>
+              {state.status === "connecting" ? "Connecting…" : "Start voice session"}
             </button>
             <p className="small muted" style={{ margin: 0 }}>
               Use the synthetic details only — do not type or say real personal information. Browser demo transcripts are stored and listed publicly on this demo.
@@ -224,13 +229,25 @@ export default function DemoPage() {
                 </>
               )}
               {state.status === "ended" && (
-                <button className="btn sm" onClick={() => dispatch({ kind: "reset" })}>
+                <button
+                  className="btn sm"
+                  onClick={() => {
+                    manager.current?.stop();
+                    dispatch({ kind: "reset" });
+                  }}
+                >
                   New session
                 </button>
               )}
             </div>
           </section>
-          {micError && <div className="banner" style={{ marginBottom: 12 }}>Microphone unavailable ({micError}). Use typed input below.</div>}
+          {notices.length > 0 && (
+            <div className="banner" role="alert" style={{ marginBottom: 12 }}>
+              {notices.map((n) => (
+                <div key={n}>{n}</div>
+              ))}
+            </div>
+          )}
           {state.errors.length > 0 && (
             <div className="banner" style={{ marginBottom: 12 }}>
               Degraded: {state.errors.slice(-2).join(" · ")}
