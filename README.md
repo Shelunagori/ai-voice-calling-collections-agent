@@ -25,8 +25,8 @@ An engineer-owned, audio-in → audio-out voice agent for collections calls, bui
 
 ## 2. Live demo
 
-- Frontend: `LIVE_DEMO_URL` — _not deployed yet (see [Deployment](#12-deployment)); replace this line with the URL once it is._
-- Backend health: `<backend-url>/ready`
+- Frontend: https://ai-voice-calling-collections-agent.vercel.app/demo
+- Backend health: https://ai-voice-calling-collections-agent-production.up.railway.app/ready
 
 ## 3. Architecture
 
@@ -72,8 +72,8 @@ Full script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 | Latency instrumentation (per-stage marks, p50/p95 by provider mode) | Implemented |
 | English / Japanese (templates, number/date/era parsing, currency formatting, provider language params) | Implemented; **not native-speaker reviewed** |
 | Browser demo: mic via AudioWorklet (when STT configured), typed fallback, live console | Implemented |
-| Cloudflare Workers AI adapter (JSON mode NLU, SSE streaming, timeouts, bounded retries, error classes) | Implemented, contract-tested against a mock transport; **not run live in this repo** |
-| Cartesia Ink STT / Sonic TTS adapters (WebSocket, cancel on barge-in) | Implemented, contract-tested against a local fake server; **not run live in this repo** |
+| Cloudflare Workers AI adapter (JSON mode NLU, SSE streaming, timeouts, bounded retries, error classes) | Implemented, contract-tested against a mock transport; JSON-mode NLU **observed working on the deployed backend** (2026-09-26); SSE rephrasing path not exercised live |
+| Cartesia Ink STT / Sonic TTS adapters (WebSocket, cancel on barge-in) | Implemented, contract-tested against local fakes and documented message shapes; **observed working on the deployed backend** (ink-whisper final transcripts, sonic-3 PCM stream) on 2026-09-26 |
 | Twilio: outbound call, signed webhooks, idempotent status callbacks, Media Streams transport, `<Dial>` transfer, hangup | Implemented, tested with fakes; **no real PSTN call has been made** |
 | Persistence (PostgreSQL/SQLite, Alembic), audit trail, transcript retention purge | Implemented, tested on PostgreSQL 16 and SQLite |
 | Observability: JSON logs + correlation ids, Prometheus `/metrics`, `/health`, `/ready` | Implemented |
@@ -127,17 +127,20 @@ What has actually been measured, and on what:
 | Barge-in cancel path (detect → TTS task stopped → transport cleared), in-process | p50 0.27 ms, p95 0.50 ms, n=50 | wall clock, mock TTS, dev container; excludes network and client buffer flush |
 | Typed turn → first audio frame sent | 2–8 ms | mock providers (rules NLU, template realizer, mock TTS); pipeline overhead only |
 | Voice short answer ("yes"): speech end → turn commit | ≈260 ms | virtual clock; VAD hang (240 ms) + quick end-of-turn rule |
+| **Live** voice turn, speech end → first agent audio | **≈1.43 s** (STT final 312 ms + end-of-turn wait 297 ms + Cloudflare NLU 727 ms + policy <1 ms + Cartesia TTS first audio 96 ms) | **n=1**, deployed Railway backend, real Cartesia ink-whisper / sonic-3 + Cloudflare llama-3.3-70b, 2026-09-26; the "caller" audio was the agent's own TTS greeting streamed back as microphone input, not a human voice |
+| **Live** typed turn → first agent audio | 873 ms (NLU 767 ms, TTS first audio 105 ms) | n=1, same deployment |
+| **Live** TTS time-to-first-audio | 410 ms on a cold connection, 96–140 ms warm | n=4, same deployment |
 
-**Not measured:** real STT, LLM and TTS latency and therefore the true speech-end → first-agent-audio time
-against the 1.5 s target. That requires Cartesia and Cloudflare credentials. The UI and `/api/metrics/latency`
-report p50/p95 per provider mode, so once credentials are set the numbers appear from real sessions; mock-mode
-figures are labelled as pipeline-only. Expected bottlenecks and the budget are discussed in
+These live figures are single samples from one location, not p50/p95; they show the pipeline works end
+to end and where the time goes (LLM understanding is the largest stage). The UI and
+`/api/metrics/latency` report p50/p95 per provider mode from real sessions; mock-mode figures are labelled
+as pipeline-only. Expected bottlenecks and the budget are discussed in
 [docs/VOICE_RUNTIME.md](docs/VOICE_RUNTIME.md#latency-budget).
 
 ## 10. Limitations
 
-- No live provider has been exercised from this repository; adapters follow the vendors' documented APIs and
-  are contract-tested against local fakes only.
+- Live provider checks so far are a handful of manual WebSocket probes against the deployed backend
+  (Cartesia STT/TTS, Cloudflare NLU); no automated live benchmark, and no real PSTN call yet.
 - Energy VAD is a deliberately simple, dependency-free baseline; production would use a model VAD and the
   provider's endpointing, tuned on labelled call audio.
 - The rules parser covers common EN/JA phrasings; free-form speech needs the LLM path.

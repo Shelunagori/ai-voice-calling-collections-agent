@@ -35,6 +35,30 @@ Option B — Vercel: import the repo, root `frontend`, env `NEXT_PUBLIC_API_BASE
 
 Then set the backend `FRONTEND_URL` to the frontend origin (CORS + WebSocket origin check in production).
 
+## Current production values
+
+Railway (backend service variables):
+
+```env
+APP_ENV=production
+FRONTEND_URL=https://ai-voice-calling-collections-agent.vercel.app   # exact origin, no wildcard
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+POLICY_COUNTRY=JP            # simulated Asia/Tokyo calling window for outbound demo calls
+POLICY_TIMEZONE=Asia/Tokyo
+POLICY_CALLING_START_HOUR=8
+POLICY_CALLING_END_HOUR=21
+# POLICY_COUNTRY=            # (empty) instead, to test outbound calls outside Tokyo hours
+```
+
+Vercel (frontend, build-time):
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://ai-voice-calling-collections-agent-production.up.railway.app
+```
+
+The browser builds the WebSocket URL from this value (`https` → `wss`, same host), never from the Vercel
+origin: `wss://ai-voice-calling-collections-agent-production.up.railway.app/ws/session?...`.
+
 ## Post-deploy checks
 
 ```bash

@@ -98,4 +98,6 @@ Target: speech end → first agent audio < 1.5 s. Contributions (design, **not m
 
 Bottleneck mitigations available but not yet built: start TTS on the template while the LLM runs; skip the
 LLM for short yes/no turns the rules parser classifies confidently; stream LLM → sentence-level TTS.
-Real numbers will appear in the UI once credentials are configured; they have not been measured here.
+First live sample (deployed backend, 2026-09-26, n=1, replayed TTS audio as the caller): STT final 312 ms,
+end-of-turn wait 297 ms, Cloudflare NLU 727 ms, Cartesia TTS first audio 96 ms — ≈1.43 s speech end → first
+agent audio. The LLM call is the dominant stage; a single sample is not a p95.

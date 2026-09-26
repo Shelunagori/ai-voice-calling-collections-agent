@@ -39,6 +39,12 @@ key; the browser may voice replies with the Web Speech API, clearly labelled as 
 **D11 — Git author.** Commits use the identity of the repository's initial commit (Shailendra Nagori) with a
 `Co-Authored-By: Claude` trailer; the machine had no global git identity configured.
 
+**D13 — Browser voice client outside React.** Socket, player and microphone live in
+`lib/voice-client.ts` (`VoiceClient` + `SessionManager`), which catches every handler error and reports it
+as an inline notice. Found after a production crash: an expression-bodied `useEffect` returned the Promise
+that Chrome 14x's `scrollIntoView()` now returns, React called it as a cleanup and the route died. A
+test now rejects expression-bodied effects.
+
 **D12 — Evaluation on a virtual clock.** Makes the suite deterministic and fast; wall-clock behaviour is
 covered separately (`tests/test_wallclock_barge_in.py`). Latency numbers from the suite are labelled as
 virtual/pipeline-only.
