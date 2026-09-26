@@ -140,7 +140,8 @@ as pipeline-only. Expected bottlenecks and the budget are discussed in
 ## 10. Limitations
 
 - Live provider checks so far are a handful of manual WebSocket probes against the deployed backend
-  (Cartesia STT/TTS, Cloudflare NLU); no automated live benchmark, and no real PSTN call yet.
+  (Cartesia STT/TTS, Cloudflare NLU) and one real PSTN call placed by the owner (2026-09-26), which exposed
+  the partial-DOB bug fixed by the allowed-action contract; no automated live benchmark.
 - Energy VAD is a deliberately simple, dependency-free baseline; production would use a model VAD and the
   provider's endpointing, tuned on labelled call audio.
 - The rules parser covers common EN/JA phrasings; free-form speech needs the LLM path.
@@ -176,8 +177,10 @@ Checks: `cd backend && ruff check app tests alembic && mypy app && pytest -q && 
 ## 12. Deployment
 
 Railway (backend + PostgreSQL) and Railway or Vercel (frontend). Everything is prepared — Dockerfiles,
-`railway.json`, `/ready` health check, `PORT` handling, migrations on start, graceful shutdown — but **no
-deployment has been performed from this repository**. Step-by-step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+`railway.json`, `/ready` health check, `PORT` handling, migrations on start, graceful shutdown. The live
+instance was deployed by the repository owner; the assistant that wrote this code has not deployed it.
+Phone-call audit trails need the server-only `OPERATOR_TOKEN` and `OPERATOR_CONSOLE_PASSWORD` on the
+frontend (see DEPLOYMENT.md). Step-by-step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 Telephony setup: [docs/TELEPHONY.md](docs/TELEPHONY.md).
 
 ## 13. Project structure

@@ -50,6 +50,23 @@ Two steps: name confirmation ("Am I speaking with Haruto Sato?") then a knowledg
 Gregorian or Japanese era forms). The LLM only *extracts* what the caller said; the controller compares it
 with the synthetic record. Denial at the name step → `WRONG_PARTY`.
 
+**Allowed-action contract** (`app/domain/turn_context.py`). The controller's phase defines which caller
+actions are valid and which slot is expected. While a date of birth is expected, only `PROVIDE_DOB`,
+`PARTIAL_DOB`, wrong-person / purpose / balance questions and the always-valid caller rights (stop contact,
+human, goodbye) are accepted — never a payment amount, payment date or consent. The contract is enforced in
+code at every layer: the LLM schema enum, the rules parser (identity phases never extract money; payment
+phases never extract a DOB), the validation layer and again in `ConversationController.apply()`, which
+drops and audits anything out of phase (`nlu.action_out_of_phase`).
+
+**Partial dates of birth.** "1988" or "April 1988" is a `PARTIAL_DOB` with only the parts said; missing parts
+are never filled in (no 1988-01-01). Parts are merged across turns and the agent asks only for what is
+missing ("And what day in April?"; no digits are spoken before verification). Verification happens only
+from a complete, real calendar date; an impossible date (April 31) is `identity.invalid_dob` and does not
+count as an attempt. A complete LLM date keeps only the parts the transcript supports. Events:
+`identity.partial_dob` (parts, missing, source, `llm_validation_failed`, notes), `identity.invalid_dob`,
+`identity.failed`, `identity.verified`. Found on a real PSTN call (session `2fa211b9`), where "1988" had
+been read as a ¥1,988 payment proposal by the unconstrained fallback.
+
 ## Promise-to-pay
 
 Becomes `CONFIRMED` only when: identity verified; amount and date pass every rule; the read-back

@@ -45,6 +45,18 @@ as an inline notice. Found after a production crash: an expression-bodied `useEf
 that Chrome 14x's `scrollIntoView()` now returns, React called it as a cleanup and the route died. A
 test now rejects expression-bodied effects.
 
+**D14 — Operator console auth via a Next.js server proxy.** Phone-session audit detail stays
+operator-only on the backend. The browser calls same-origin route handlers; the Next.js server adds
+`OPERATOR_TOKEN` for an operator who signed in with a separate `OPERATOR_CONSOLE_PASSWORD` (HttpOnly,
+SameSite=Strict, HMAC-signed 8 h cookie keyed from the token). Alternative considered: typing the backend
+token into the browser (as the Telephony page still does for placing calls) — rejected for audit viewing
+because the bearer would reach the browser. Limitation: login throttling is per server instance.
+
+**D15 — Allowed-action contract instead of prompt wording.** Found on a real PSTN call: an invalid LLM DOB
+fell back to an unconstrained parser that read a birth year as money. The phase now constrains every layer
+(schema, parser, validation, controller) and partial DOBs are a typed action. Trade-off: in identity phases
+payment talk ("I'll pay 20,000") is answered with a clarification instead of the pre-verification line.
+
 **D12 — Evaluation on a virtual clock.** Makes the suite deterministic and fast; wall-clock behaviour is
 covered separately (`tests/test_wallclock_barge_in.py`). Latency numbers from the suite are labelled as
 virtual/pipeline-only.

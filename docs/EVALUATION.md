@@ -31,9 +31,10 @@ scripted STT transcript.
 - `barge_in_timestamps_ordered` — detected ≤ cancel requested ≤ stopped.
 - `session_terminated`.
 
-### Cases (30)
+### Cases (32)
 
-identity: `correct_identity`, `wrong_identity`, `wrong_dob_twice` · promise: `happy_path_promise` ·
+identity: `correct_identity`, `wrong_identity`, `wrong_dob_twice`, `pstn_partial_dob`,
+`pstn_partial_dob_llm_malformed` (real-call regressions: partial DOB clarified, never a payment) · promise: `happy_path_promise` ·
 negotiation: `partial_payment`, `ambiguous_statement` · policy: `invalid_extension`, `below_minimum`,
 `discount_request`, `prompt_injection`, `llm_hallucinated_terms` · resilience: `llm_invalid_json` ·
 caller rights: `stop_contact`, `stop_contact_unverified`, `human_transfer` · barge-in: `interruption`,
@@ -46,7 +47,8 @@ caller rights: `stop_contact`, `stop_contact_unverified`, `human_transfer` · ba
 
 | Date | Code | Providers | Result |
 |---|---|---|---|
-| 2026-09-26 | this commit | mock (rules NLU, mock STT/TTS), virtual clock | **30/30 pass** |
+| 2026-09-26 | 39d9936 | mock (rules NLU, mock STT/TTS), virtual clock | 30/30 pass |
+| 2026-09-26 | this commit | mock (rules NLU / MockLLM with injected partial-DOB output), virtual clock | **32/32 pass** |
 
 Latency figures inside the report are virtual-clock pipeline timings, not provider latency.
 
