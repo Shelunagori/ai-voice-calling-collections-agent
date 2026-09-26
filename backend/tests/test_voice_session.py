@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from app.domain.audit import AuditType
-from app.domain.models import Language, PromiseStatus
+from app.domain.models import Channel, Language, PromiseStatus
 from app.voice import audio
 from app.voice.lifecycle import VoiceState
 from tests.conftest import drain, make_session
@@ -174,9 +174,7 @@ async def test_human_transfer_is_simulated_without_telephony():
 
 
 async def test_phone_transfer_uses_telephony_provider_when_live():
-    sess, tr, clk, prov = make_session(
-        "G", channel=__import__("app.domain.models", fromlist=["Channel"]).Channel.PHONE, call_id="CA123"
-    )
+    sess, tr, clk, prov = make_session("G", channel=Channel.PHONE, call_id="CA123")
     prov.telephony.live = True
     sess.cfg.transfer_number = "+15550000000"
     await sess.start(run_background=False)

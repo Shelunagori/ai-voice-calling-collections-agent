@@ -551,21 +551,24 @@ class VoiceSession:
         lat.mark("tts_request", self._mono())
         sr = self.d.tts.sample_rate
         ctx = f"{self.c.state.session_id}:{pb.generation}"
-        async for chunk in self.d.tts.synthesize(pb.text, self.c.lang.value, context_id=ctx):
-            if pb.generation != self.gen:
-                return  # stale generation: never send
-            now = self._mono()
-            lat.mark("tts_first_audio", now)
-            if pb.started_at is None:
-                pb.started_at = now
-            ahead = pb.sent_s - (now - pb.started_at)
-            if ahead > self.cfg.playback_lead_s:
-                await self.d.sleep(ahead - self.cfg.playback_lead_s)
+        # aclosing(): when playback is cancelled (barge-in) the provider generator is
+        # closed immediately, so real adapters send their cancel message right away.
+        async with contextlib.aclosing(self.d.tts.synthesize(pb.text, self.c.lang.value, context_id=ctx)) as stream:
+            async for chunk in stream:
                 if pb.generation != self.gen:
-                    return
-            await self.transport.send_audio(chunk, pb.generation)
-            lat.mark("first_audio_sent", self._mono())
-            pb.sent_s += len(chunk) / 2 / sr
+                    return  # stale generation: never send
+                now = self._mono()
+                lat.mark("tts_first_audio", now)
+                if pb.started_at is None:
+                    pb.started_at = now
+                ahead = pb.sent_s - (now - pb.started_at)
+                if ahead > self.cfg.playback_lead_s:
+                    await self.d.sleep(ahead - self.cfg.playback_lead_s)
+                    if pb.generation != self.gen:
+                        return
+                await self.transport.send_audio(chunk, pb.generation)
+                lat.mark("first_audio_sent", self._mono())
+                pb.sent_s += len(chunk) / 2 / sr
         pb.synthesis_complete = True
         if pb.started_at is not None:
             remaining = pb.sent_s - (self._mono() - pb.started_at)
