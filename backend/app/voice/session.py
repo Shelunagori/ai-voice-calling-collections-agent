@@ -300,6 +300,22 @@ class VoiceSession:
             if self._stt_stream:
                 await self._stt_stream.close()
         self.lifecycle.to(VoiceState.ENDED, reason)
+        hist = self.lifecycle.history
+        t0 = hist[0].at if hist else 0.0
+        self.c.audit.record(
+            AuditType.VOICE_LIFECYCLE,
+            self.c.turn_index,
+            transitions=[
+                {
+                    "from": t.from_state.value,
+                    "to": t.to_state.value,
+                    "cause": t.cause,
+                    "t_ms": round((t.at - t0) * 1000),
+                }
+                for t in hist[:300]
+            ],
+            truncated=len(hist) > 300,
+        )
         self.c.audit.record(
             AuditType.SESSION_ENDED, self.c.turn_index, reason=reason, call_status=self.c.state.call_status.value
         )

@@ -34,6 +34,7 @@ class AuditType(StrEnum):
     HUMAN_TRANSFER_STATUS = "transfer.status"
     POLICY_DECISION = "policy.decision"
     BARGE_IN = "voice.barge_in"
+    VOICE_LIFECYCLE = "voice.lifecycle"  # compact list of state transitions, recorded at session end
     PROVIDER_FAILURE = "provider.failure"
     RESPONSE_GUARD_BLOCKED = "response.guard_blocked"
     LLM_PROPOSAL_REJECTED = "llm.proposal_rejected"
