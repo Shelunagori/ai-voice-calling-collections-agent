@@ -8,7 +8,17 @@ import { PolicyDecision, startCall, StartCallResult, statusFromDetail } from "@/
 import { normaliseE164 } from "@/lib/phone";
 import { loadSessionDetail } from "@/lib/session-detail";
 
-type Account = { scenario_key: string; contact_attempts: number; stop_contact: boolean; stop_contact_at: string | null };
+type Account = {
+  scenario_key: string;
+  debtor_name?: string;
+  contact_attempts: number;
+  stop_contact: boolean;
+  stop_contact_at: string | null;
+  debtor_stop_contact?: boolean;
+  debtor_stop_contact_at?: string | null;
+  eligible?: boolean;
+};
+type ContactPoint = { label: string; stop_contact: boolean; stop_contact_at: string | null };
 
 const RULE_LABELS: Record<string, string> = {
   DEMO_CALLING_HOURS_WINDOW: "Calling hours",
@@ -86,6 +96,7 @@ function LiveStatus({ sessionId }: { sessionId: string }) {
 export default function TelephonyPage() {
   const { cap } = useCapabilities();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [contactPoints, setContactPoints] = useState<ContactPoint[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [to, setTo] = useState("");
   const [scenario, setScenario] = useState("A");
@@ -94,7 +105,15 @@ export default function TelephonyPage() {
   const inFlight = useRef(false); // guards double clicks before React re-renders the disabled button
   const [result, setResult] = useState<StartCallResult | null>(null);
 
-  const refreshAccounts = () => getJSON<Account[]>("/api/accounts").then(setAccounts).catch(() => undefined);
+  const refreshAccounts = () =>
+    Promise.all([
+      getJSON<Account[]>("/api/accounts")
+        .then((a) => setAccounts(Array.isArray(a) ? a : []))
+        .catch(() => undefined),
+      getJSON<ContactPoint[]>("/api/contact-points")
+        .then((c) => setContactPoints(Array.isArray(c) ? c : []))
+        .catch(() => undefined),
+    ]);
   useEffect(() => {
     void refreshAccounts();
     getJSON<Scenario[]>("/api/scenarios")
@@ -227,26 +246,66 @@ export default function TelephonyPage() {
         )}
       </div>
 
-      <div className="panel table-scroll">
-        <h3>Contact eligibility (synthetic accounts)</h3>
+      <div className="panel table-scroll" data-testid="eligibility">
+        <h3>Contact eligibility</h3>
+        <p className="small muted" style={{ marginTop: 0 }}>
+          A stop-contact request applies to the debtor (all of their accounts) and to the phone number where it was heard: any later call to
+          that number is blocked for every scenario.
+        </p>
         <table>
           <thead>
             <tr>
-              <th>Account</th>
+              <th>Scenario</th>
+              <th>Synthetic debtor</th>
               <th>Attempts</th>
-              <th>Stop-contact</th>
+              <th>Future contact</th>
             </tr>
           </thead>
           <tbody>
-            {accounts.map((a) => (
-              <tr key={a.scenario_key}>
-                <td>{a.scenario_key}</td>
-                <td>{a.contact_attempts}</td>
-                <td>{a.stop_contact ? <span className="pill bad">active since {a.stop_contact_at?.slice(0, 16)}</span> : <span className="pill ok">no</span>}</td>
-              </tr>
-            ))}
+            {accounts.map((a) => {
+              const eligible = a.eligible ?? !(a.stop_contact || a.debtor_stop_contact);
+              const since = (a.debtor_stop_contact_at || a.stop_contact_at)?.slice(0, 16);
+              return (
+                <tr key={a.scenario_key} data-testid={`account-${a.scenario_key}`}>
+                  <td>{a.scenario_key}</td>
+                  <td>{a.debtor_name ?? "—"}</td>
+                  <td>{a.contact_attempts}</td>
+                  <td>
+                    {eligible ? (
+                      <span className="pill ok">eligible</span>
+                    ) : (
+                      <span className="pill bad">
+                        not eligible · {a.debtor_stop_contact ? "debtor" : "account"} stop-contact{since ? ` since ${since}` : ""}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+        <h4 className="small muted">Phone numbers with a stop-contact request</h4>
+        {contactPoints.filter((c) => c.stop_contact).length === 0 ? (
+          <p className="small muted" data-testid="contact-points-empty">
+            None.
+          </p>
+        ) : (
+          <table className="small" data-testid="contact-points">
+            <tbody>
+              {contactPoints
+                .filter((c) => c.stop_contact)
+                .map((c) => (
+                  <tr key={c.label}>
+                    <td className="mono">{c.label}</td>
+                    <td>
+                      <span className="pill bad">blocked for every scenario</span>
+                    </td>
+                    <td className="muted">since {c.stop_contact_at?.slice(0, 16) ?? "—"}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </main>
   );
