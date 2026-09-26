@@ -101,3 +101,9 @@ LLM for short yes/no turns the rules parser classifies confidently; stream LLM �
 First live sample (deployed backend, 2026-09-26, n=1, replayed TTS audio as the caller): STT final 312 ms,
 end-of-turn wait 297 ms, Cloudflare NLU 727 ms, Cartesia TTS first audio 96 ms — ≈1.43 s speech end → first
 agent audio. The LLM call is the dominant stage; a single sample is not a p95.
+
+First real PSTN call (session `2fa211b9`, 2026-09-26, Twilio Media Streams + Cartesia + Cloudflare, build
+before the partial-DOB fix), 7 voice turns, speech end → first agent audio: 1470, 1519, 1748, 1806, 1841,
+1881, 1972 ms (median 1.81 s). Per stage: STT final 317–324 ms; transcript → turn commit 288–311 ms (one
+turn 868 ms); NLU 746–1262 ms; TTS first audio 101–178 ms. The 1.5 s budget is not met consistently; NLU is
+the stage to attack first.

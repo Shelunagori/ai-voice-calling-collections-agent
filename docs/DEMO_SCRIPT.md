@@ -14,7 +14,7 @@
 6. **(0:55)** **New session**, English, scenario **C**, verify, then "Can I pay 15,000 yen in 60 days?" →
    `PAYMENT_DATE_WITHIN_MAX_EXTENSION: BLOCK`; "Yes, I agree" does not create a promise.
 7. **(1:15)** End → **Inspect audit trail**: every decision with reason and timestamp; download JSON.
-8. **(1:25)** **Evaluation → Run evaluation suite**: 30/30 invariants-based cases.
+8. **(1:25)** **Evaluation → Run evaluation suite**: 32/32 invariants-based cases.
 
 ## Scenario reference (synthetic)
 

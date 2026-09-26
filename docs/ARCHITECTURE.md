@@ -13,6 +13,7 @@ eligibility, promise-to-pay or transfer. Those are deterministic state transitio
 | Transport | `app/api/ws_browser.py`, `app/api/telephony.py` | Browser WebSocket (PCM16 16 kHz + JSON events); Twilio Media Streams (μ-law 8 kHz ↔ PCM16 16 kHz) |
 | Voice runtime | `app/voice/session.py` | One `VoiceSession` per conversation: VAD, STT stream, end-of-turn, barge-in, paced TTS playback, lifecycle, latency |
 | Understanding | `app/domain/understanding.py`, `nlu_rules.py` | Transcript → typed `Interpretation` (LLM JSON mode + deterministic rules; rules are the fallback and the caller-rights safety net) |
+| Allowed actions | `app/domain/turn_context.py` | Phase → expected slot + allowed actions; enforced on the LLM schema, the rules parser, validation and the controller |
 | Controller | `app/domain/controller.py` | Sole writer of `CollectionState`; applies proposals only after policy checks; returns a `ResponsePlan` + effects |
 | Policy | `app/domain/policy.py` | Deterministic demo rules; every evaluation is a `PolicyDecision` written to the audit log |
 | Responses | `app/domain/responses.py`, `realizer.py` | Bilingual templates from approved facts; optional LLM rephrase; output guard |
