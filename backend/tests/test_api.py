@@ -272,3 +272,13 @@ def test_media_stream_rejects_bad_token(tclient):
         )
         with pytest.raises(WebSocketDisconnect):
             ws.receive_text()
+
+
+def test_wire_contract_audit_envelope(client):
+    """The browser relies on {type:"audit", event_type:<audit type>} for the policy feed."""
+    with client.websocket_connect("/ws/session?scenario=A&lang=en&mode=text") as ws:
+        ev = recv_until(ws, lambda e: e["type"] == "audit" and e.get("event_type") == "policy.decision")
+        assert ev["data"]["rule"] and ev["data"]["decision"] in ("ALLOW", "BLOCK", "NOT_APPLICABLE")
+        recv_until(ws, agent_done)
+        ws.send_text(json.dumps({"type": "end"}))
+        recv_until(ws, lambda e: e["type"] == "session.ended")

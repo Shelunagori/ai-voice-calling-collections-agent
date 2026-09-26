@@ -193,7 +193,8 @@ class VoiceSession:
         self._outq.put_nowait((kind, payload))
 
     def _on_audit(self, ev: AuditEvent) -> None:
-        self.emit("audit", ev.to_dict())
+        # On the wire the envelope type is "audit"; the audit event type travels as event_type.
+        self.emit("audit", {**ev.to_dict(), "event_type": ev.type.value})
 
     def _on_transition(self, t: Transition) -> None:
         if t.to_state == VoiceState.LISTENING:
@@ -207,7 +208,7 @@ class VoiceSession:
                 return
             kind, payload = item
             try:
-                await self.transport.send_event({"type": kind, **payload})
+                await self.transport.send_event({**payload, "type": kind})
             except Exception as e:  # client gone: keep recording, stop sending
                 log.debug("transport_send_failed", extra={"error": str(e)[:100]})
             try:
@@ -257,12 +258,17 @@ class VoiceSession:
         if self.lifecycle.terminal:
             return
         cur = asyncio.current_task()
-        for t in (self._process_task, self._ticker, self._stt_task):
-            if t and t is not cur and not t.done():
-                t.cancel()
+        pending = []
         if self._playback and self._playback.task and not self._playback.task.done():
             self.gen += 1
             self._playback.task.cancel()
+        for t in (self._process_task, self._ticker, self._stt_task):
+            if t and t is not cur and not t.done():
+                t.cancel()
+                pending.append(t)
+        if pending:
+            # Let cancelled tasks emit their final events before the session-ended event.
+            await asyncio.wait(pending, timeout=1.0)
         self.c.on_disconnect(reason)
         with contextlib.suppress(Exception):
             if self._stt_stream:
@@ -487,7 +493,30 @@ class VoiceSession:
         if Effect.SEND_PTP_CONFIRMATION in outcome.effects:
             self._spawn(self._send_ptp_confirmation())
 
-        interrupted, fraction = await self._speak(real.text, lat)
+        self.emit(
+            "agent.speaking",
+            {"index": agent_turn.index, "text": real.text, "acts": agent_turn.intent, "realizer": real.source},
+        )
+        try:
+            interrupted, fraction = await self._speak(real.text, lat)
+        except asyncio.CancelledError:
+            # Session ended mid-utterance: keep the transcript/audit complete.
+            agent_turn.interrupted = True
+            agent_turn.spoken_text = ""
+            self.emit(
+                "turn.agent",
+                {
+                    "index": agent_turn.index,
+                    "text": real.text,
+                    "acts": agent_turn.intent,
+                    "interrupted": True,
+                    "spoken_text": None,
+                    "realizer": real.source,
+                    "turn_index": self.c.turn_index,
+                    "cut_by": "session_end",
+                },
+            )
+            raise
         agent_turn.interrupted = interrupted
         if interrupted:
             words = real.text.split(" ") if " " in real.text else list(real.text)

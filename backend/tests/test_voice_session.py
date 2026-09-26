@@ -207,3 +207,16 @@ async def test_end_is_idempotent_and_cleans_up_tasks():
     assert sess.state == VoiceState.ENDED
     assert len([e for e in sess.c.audit.events if e.type == AuditType.SESSION_ENDED]) == 1
     assert sess._ticker is None or sess._ticker.done() or sess._ticker.cancelled()
+
+
+async def test_end_mid_utterance_keeps_agent_turn_in_transcript():
+    sess, tr, clk, _ = make_session("A")
+    await sess.start(run_background=False)
+    for _ in range(20):
+        await clk.advance_async(0.05)
+    assert sess.state == VoiceState.AGENT_SPEAKING
+    await sess.end("caller_ended")
+    agent = [e for e in tr.of("turn.agent")]
+    assert agent and agent[0]["interrupted"] and agent[0].get("cut_by") == "session_end"
+    types = [e["type"] for e in tr.events]
+    assert types.index("turn.agent") < types.index("session.ended")
