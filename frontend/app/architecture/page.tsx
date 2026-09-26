@@ -83,7 +83,7 @@ const ROWS: [string, string, string][] = [
   ["Conversation controller", "Implemented", "Owns CollectionState; applies typed proposals only after policy checks."],
   ["Policy engine", "Implemented", "Identity-before-disclosure, envelope (min / max days / ≤ balance), no discounts, stop-contact, transfer, calling hours, attempt limits."],
   ["Promise-to-pay", "Implemented", "Requires verified identity, valid terms, a fully played read-back and an explicit yes; one per session (DB unique)."],
-  ["Barge-in", "Implemented", "VAD sustained speech or non-filler STT partial → generation bump → TTS cancel → transport clear."],
+  ["Barge-in", "Implemented", "VAD sustained speech, a non-filler STT partial/final, or typed input → generation bump → TTS cancel → transport clear."],
   ["Turn detection", "Implemented", "VAD separated from semantic end-of-turn (short answers, thinking pauses, noise, hard ceiling)."],
   ["Latency instrumentation", "Implemented", "Per-stage marks per turn, p50/p95 by provider mode; mock timings labelled as such."],
   ["Browser voice / typed", "Implemented", "Mic via AudioWorklet (16 kHz PCM16) when STT is configured; typed fallback otherwise."],
