@@ -76,3 +76,12 @@ describe("format + stats", () => {
     expect(turnTotal({ speech_end_to_first_audio: 900, input_to_first_audio: 900 })).toBe(900);
   });
 });
+
+describe("degradation events", () => {
+  it("switches input mode when speech recognition is lost", () => {
+    let s = reduce(initialState, ev({ type: "session.created", session_id: "x", input_mode: "voice", providers: {} }));
+    s = reduce(s, ev({ type: "input_mode", input_mode: "text", reason: "speech recognition unavailable" }));
+    expect(s.inputMode).toBe("text");
+    expect(s.errors.at(-1)).toContain("speech recognition unavailable");
+  });
+});

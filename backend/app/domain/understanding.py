@@ -14,6 +14,7 @@ the caller *said*, and application code compares it with the record.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -79,9 +80,13 @@ class Understanding:
             last_agent=last_agent[:300].replace('"', "'"),
         )
         try:
-            raw = await self.llm.complete_json(system, text[:500], interpretation_json_schema(), timeout=self.timeout_s)
+            # One overall deadline for the whole call, retries included (latency budget).
+            async with asyncio.timeout(self.timeout_s):
+                raw = await self.llm.complete_json(
+                    system, text[:500], interpretation_json_schema(), timeout=self.timeout_s
+                )
             llm_interp = _validate(raw)
-        except (ProviderError, ValidationError, ValueError, TypeError) as e:
+        except (ProviderError, ValidationError, ValueError, TypeError, TimeoutError) as e:
             log.warning("llm_nlu_fallback", extra={"error": str(e)[:200]})
             return UnderstandingResult(
                 rules,
@@ -119,6 +124,10 @@ def merge(llm: Interpretation, rules: Interpretation) -> tuple[Interpretation, l
         if rules.has(act) and not any(a.action == act for a in actions):
             actions.insert(0, ProposedAction(action=act))
             notes.append(f"rules_added_{act.value.lower()}")
+    # a model "yes" never overrides an explicit "no" the rules parser heard (consent gate)
+    if rules.has(Action.DENY) and any(a.action == Action.AFFIRM for a in actions):
+        actions = [ProposedAction(action=Action.DENY) if a.action == Action.AFFIRM else a for a in actions]
+        notes.append("affirm_overridden_by_rules_deny")
     # grounding: prefer amounts read verbatim from the transcript
     rp = rules.first(Action.PROPOSE_PAYMENT)
     for i, a in enumerate(actions):

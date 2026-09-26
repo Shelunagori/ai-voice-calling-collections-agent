@@ -17,6 +17,7 @@ import hmac
 import json
 import logging
 import re
+import time
 import uuid
 from typing import Any
 from xml.sax.saxutils import quoteattr
@@ -41,8 +42,29 @@ E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 TERMINAL_STATUSES = {"completed", "busy", "failed", "no-answer", "canceled"}
 
 
+PENDING_TTL_S = 600
+PENDING_MAX = 100
+
+
 def stream_token(auth_token: str, session_id: str) -> str:
+    if not auth_token:
+        raise ValueError("refusing to derive a media-stream token from an empty key")
     return hmac.new(auth_token.encode(), f"media:{session_id}".encode(), hashlib.sha256).hexdigest()
+
+
+def require_telephony(state: AppState = Depends(get_state)) -> None:
+    """Telephony endpoints do not exist unless telephony is enabled *and* configured."""
+    if not state.settings.telephony_active:
+        raise HTTPException(404, "not found")
+
+
+def _remember_pending(state: AppState, sid: str, ctx: dict[str, Any]) -> None:
+    now = time.monotonic()
+    for k in [k for k, v in state.pending_calls.items() if now - v.get("created", now) > PENDING_TTL_S]:
+        state.pending_calls.pop(k, None)
+    while len(state.pending_calls) >= PENDING_MAX:
+        state.pending_calls.pop(next(iter(state.pending_calls)))
+    state.pending_calls[sid] = {**ctx, "created": now}
 
 
 def _public_url(state: AppState, request: Request) -> str:
@@ -95,12 +117,16 @@ async def start_call(body: CallRequest, request: Request, state: AppState = Depe
     except ProviderError as e:
         raise HTTPException(502, f"telephony provider error: {e.kind.value}") from e
     await state.repo.increment_contact_attempts(account.account_id)
-    state.pending_calls[str(sid)] = {
-        "scenario": key,
-        "language": body.language.value,
-        "call_id": handle.call_id,
-        "decisions": [d.to_dict() for d in decisions],
-    }
+    _remember_pending(
+        state,
+        str(sid),
+        {
+            "scenario": key,
+            "language": body.language.value,
+            "call_id": handle.call_id,
+            "decisions": [d.to_dict() for d in decisions],
+        },
+    )
     return {
         "status": "dialing",
         "session_id": str(sid),
@@ -109,20 +135,18 @@ async def start_call(body: CallRequest, request: Request, state: AppState = Depe
     }
 
 
-@router.post("/telephony/twilio/voice")
+@router.post("/telephony/twilio/voice", dependencies=[Depends(require_telephony)])
 async def twilio_voice(request: Request, state: AppState = Depends(get_state)) -> Response:
     form = await _verified_form(request, state)
     sid = request.query_params.get("session_id") or ""
     if sid not in state.pending_calls:
         # Inbound (or unknown) call: start a fresh verification-first session.
         sid = str(uuid.uuid4())
-        state.pending_calls[sid] = {
-            "scenario": "A",
-            "language": "ja",
-            "call_id": form.get("CallSid", ""),
-            "decisions": [],
-            "inbound": True,
-        }
+        _remember_pending(
+            state,
+            sid,
+            {"scenario": "A", "language": "ja", "call_id": form.get("CallSid", ""), "decisions": [], "inbound": True},
+        )
     ws_base = (
         state.settings.twilio_webhook_base_url.rstrip("/").replace("https://", "wss://").replace("http://", "ws://")
     )
@@ -137,7 +161,7 @@ async def twilio_voice(request: Request, state: AppState = Depends(get_state)) -
     return Response(twiml, media_type="application/xml")
 
 
-@router.post("/telephony/twilio/status")
+@router.post("/telephony/twilio/status", dependencies=[Depends(require_telephony)])
 async def twilio_status(request: Request, state: AppState = Depends(get_state)) -> dict[str, str]:
     form = await _verified_form(request, state)
     call_sid = form.get("CallSid", "")
@@ -187,6 +211,9 @@ class TwilioTransport:
 @router.websocket("/telephony/twilio/media")
 async def twilio_media(ws: WebSocket) -> None:
     state: AppState = ws.app.state.app_state
+    if not state.settings.telephony_active:
+        await ws.close(code=1008)
+        return
     await ws.accept()
     transport = TwilioTransport(ws)
     sess = rec = None
@@ -203,10 +230,14 @@ async def twilio_media(ws: WebSocket) -> None:
                 params = start.get("customParameters", {}) or {}
                 sid = str(params.get("session_id", ""))
                 expected = stream_token(state.settings.twilio_auth_token, sid)
-                ctx = state.pending_calls.pop(sid, None)
-                if ctx is None or not hmac.compare_digest(expected, str(params.get("token", ""))):
+                # Verify before consuming the pending entry, so a forged attempt cannot burn it.
+                if sid not in state.pending_calls or not hmac.compare_digest(expected, str(params.get("token", ""))):
                     metrics.inc("media_stream_auth_failures")
                     await ws.close(code=1008)
+                    return
+                ctx = state.pending_calls.pop(sid)
+                if state.draining or len(state.sessions) >= state.settings.max_concurrent_sessions:
+                    await ws.close(code=1013)
                     return
                 transport.stream_sid = start.get("streamSid", "")
                 call_sid = start.get("callSid") or ctx.get("call_id")

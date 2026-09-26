@@ -252,17 +252,32 @@ class _Slots(dict[str, str]):
 # ----------------------------------------------------------------------------------
 
 _DEBT_WORDS_EN = re.compile(
-    r"\b(debt|owe[sd]?|owing|balance|overdue|arrears|payment|pay|repay|collection|loan|outstanding)\b", re.I
+    r"\b(debts?|owe[sd]?|owing|balance|overdue|arrears|payments?|pay|repay|collections?|loans?|outstanding|"
+    r"bills?|unpaid|due|past due|yen|jpy|dollars?|installments?|thousand|hundred|million)\b",
+    re.I,
 )
-_DEBT_WORDS_JA = ["借金", "残高", "滞納", "返済", "支払", "延滞", "未払", "債務", "督促", "ローン", "円"]
+_DEBT_WORDS_JA = [
+    "借金",
+    "残高",
+    "滞納",
+    "返済",
+    "支払",
+    "延滞",
+    "未払",
+    "債務",
+    "督促",
+    "ローン",
+    "円",
+    "請求",
+    "万",
+    "千",
+]
 _FORBIDDEN_EN = re.compile(
     r"\b(waive|waived|forgive|forgiven|discount|sue|lawsuit|court|arrest|police|garnish|seize|jail|prison|"
     r"guarantee[d]? approval|legal action)\b",
     re.I,
 )
 _FORBIDDEN_JA = ["免除", "減額", "値引", "訴訟", "裁判", "差し押さえ", "差押", "逮捕", "警察", "刑務所", "法的措置"]
-_MONEY_EN = re.compile(r"(¥\s?[\d,]+|\b[\d,]{4,}\s*(yen)?\b)", re.I)
-_MONEY_JA = re.compile(r"([\d,]+)\s*円")
 
 
 @dataclass
@@ -272,11 +287,17 @@ class GuardResult:
 
 
 def _amounts_in(text: str) -> list[int]:
-    t = unicodedata.normalize("NFKC", text)
-    vals = []
-    for m in re.finditer(r"¥\s?([\d,]+)", t):
-        vals.append(int(m[1].replace(",", "")))
-    for m in _MONEY_JA.finditer(t):
+    """Every money amount a listener could hear: ¥N, N円, N yen, JPY N, spoken numbers
+    ("fifty thousand yen", 三万円). Dates are masked first so years are not amounts."""
+    from . import nlu_rules
+
+    t = nlu_rules.normalise(text)
+    today = date(2026, 1, 1)  # only used to resolve relative expressions while masking
+    en_dates = nlu_rules._find_dates_en(t, today)
+    ja_dates = nlu_rules._find_dates_ja(t, today)
+    masked = nlu_rules._mask(t, en_dates.spans + ja_dates.spans)
+    vals = nlu_rules._find_amounts_en(masked) + nlu_rules._find_amounts_ja(masked)
+    for m in re.finditer(r"\bjpy\s*([\d,]+)", masked):
         vals.append(int(m[1].replace(",", "")))
     return vals
 
@@ -317,10 +338,36 @@ _EN_MONTHS = [
     "december",
 ]
 _EN_MD = re.compile(r"\b(" + "|".join(_EN_MONTHS) + r")\s+(\d{1,2})\b", re.I)
+_EN_DM = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + "|".join(_EN_MONTHS) + r")\b", re.I)
+_NUM_MD = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/\d{2,4})?(?![\d/])")
+_ISO = re.compile(r"\b\d{4}-(\d{2})-(\d{2})\b")
 _JA_MD = re.compile(r"(\d{1,2})月(\d{1,2})日")
 
 
 def _month_days_in(text: str) -> list[tuple[int, int]]:
     out = [(_EN_MONTHS.index(m[1].lower()) + 1, int(m[2])) for m in _EN_MD.finditer(text)]
+    out += [(_EN_MONTHS.index(m[2].lower()) + 1, int(m[1])) for m in _EN_DM.finditer(text)]
+    out += [(int(m[1]), int(m[2])) for m in _NUM_MD.finditer(text)]
+    out += [(int(m[1]), int(m[2])) for m in _ISO.finditer(text)]
     out += [(int(m[1]), int(m[2])) for m in _JA_MD.finditer(text)]
     return out
+
+
+_NUMBER_WORDS = re.compile(
+    r"\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+    r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|"
+    r"thousand|million)\b",
+    re.I,
+)
+_KANJI_NUM = re.compile("[〇一二三四五六七八九十百千万億]")
+
+
+def numbers_match_template(candidate: str, template: str) -> bool:
+    """A rephrasing may not introduce any number the approved template did not contain."""
+    c = unicodedata.normalize("NFKC", candidate).replace(",", "")
+    t = unicodedata.normalize("NFKC", template).replace(",", "")
+    if not set(re.findall(r"\d+", c)) <= set(re.findall(r"\d+", t)):
+        return False
+    if {w.lower() for w in _NUMBER_WORDS.findall(c)} - {w.lower() for w in _NUMBER_WORDS.findall(t)}:
+        return False
+    return set(_KANJI_NUM.findall(c)) <= set(_KANJI_NUM.findall(t))

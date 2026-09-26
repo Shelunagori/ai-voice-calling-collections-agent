@@ -171,6 +171,8 @@ function applyEvent(s: ConsoleState, e: ServerEvent): ConsoleState {
       return { ...s, notifications: [...s.notifications, { channel: e.channel, provider: e.provider, delivered: e.delivered, detail: e.detail }] };
     case "error":
       return { ...s, errors: [...s.errors, `${e.provider}: ${e.message}`] };
+    case "input_mode":
+      return { ...s, inputMode: e.input_mode, errors: [...s.errors, `input switched to ${e.input_mode}: ${e.reason}`] };
     case "session.ended":
       return { ...s, status: "ended", endedReason: e.reason };
     default:

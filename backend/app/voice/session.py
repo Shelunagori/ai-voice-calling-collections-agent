@@ -180,6 +180,7 @@ class VoiceSession:
         self._listening_since = self._mono()
         self._started_at = self._mono()
         self._pending_text: str | None = None
+        self._stt_reopens = 0
         self._bg: set[asyncio.Task[Any]] = set()
         self.ended = asyncio.Event()
         self.c.audit.subscribe(self._on_audit)
@@ -277,6 +278,9 @@ class VoiceSession:
         self.c.audit.record(
             AuditType.SESSION_ENDED, self.c.turn_index, reason=reason, call_status=self.c.state.call_status.value
         )
+        bg = [t for t in self._bg if t is not cur and not t.done()]
+        if bg:  # e.g. a promise confirmation still being sent: record it before the end event
+            await asyncio.wait(bg, timeout=2.0)
         self._emit_state()
         self.emit("session.ended", {"reason": reason, "summary": self.summary()})
         self._outq.put_nowait(None)
@@ -334,10 +338,15 @@ class VoiceSession:
                     await self._process_task
                 self.lifecycle.to(VoiceState.LISTENING, "caller_added_text")
             else:
-                self._pending_text = text
+                # Keep every queued line (joined), not just the last one.
+                self._pending_text = f"{self._pending_text} {text}" if self._pending_text else text
                 return
+        if not self._accepting_turns():
+            self.emit("input.ignored", {"text": text, "reason": "conversation_closed"})
+            return
         self.emit("transcript.final", {"text": text, "source": "typed"})
-        self._commit_turn(text, "text", speech_end=now, final_at=now)
+        # Typed turns have no speech end; latency is measured from text arrival.
+        self._commit_turn(text, "text", speech_end=None, final_at=now)
 
     async def interrupt(self) -> None:
         """Explicit barge-in (UI button / test): same code path as detected speech."""
@@ -358,6 +367,11 @@ class VoiceSession:
                     ):
                         await self.barge_in("stt_partial")
                 elif ev.type == STTEventType.FINAL:
+                    if self.state not in (VoiceState.USER_SPEAKING, VoiceState.INTERRUPTED):
+                        # Late final for a turn already committed (or stray): never leak it forward.
+                        if ev.text.strip():
+                            self.emit("transcript.discarded", {"text": ev.text.strip(), "state": self.state.value})
+                        continue
                     if ev.text.strip():
                         self._turn_text.append(ev.text.strip())
                         self._final_at = ev.at or self._mono()
@@ -366,11 +380,31 @@ class VoiceSession:
                 elif ev.type == STTEventType.ERROR:
                     self._provider_failure("stt", ProviderError("stt", ErrorKind.UNAVAILABLE, ev.error or "error"))
                 elif ev.type == STTEventType.CLOSED:
-                    return
+                    break
         except asyncio.CancelledError:
             raise
         except Exception as e:
             self._provider_failure("stt", e)
+        if not self.lifecycle.terminal:
+            await self._stt_lost()
+
+    async def _stt_lost(self) -> None:
+        """The STT stream ended while the call is live: reopen, or degrade explicitly."""
+        self._provider_failure("stt", ProviderError("stt", ErrorKind.UNAVAILABLE, "stream closed unexpectedly"))
+        if self.d.stt is not None and self._stt_reopens < 2:
+            self._stt_reopens += 1
+            try:
+                self._stt_stream = await self.d.stt.open_stream(self.c.lang.value, self.cfg.sample_rate)
+                self._stt_task = asyncio.create_task(self._stt_loop(self._stt_stream))
+                return
+            except ProviderError as e:
+                self._provider_failure("stt", e)
+        self._stt_stream = None
+        if self.c.state.channel == Channel.PHONE:
+            await self.end("stt_unavailable")
+        else:
+            self.input_mode = "text"
+            self.emit("input_mode", {"input_mode": "text", "reason": "speech recognition unavailable"})
 
     # ------------------------------------------------------------------ turn taking
     async def _on_speech_start(self) -> None:
@@ -419,7 +453,14 @@ class VoiceSession:
         self._speech_end_at = None
         self._final_at = None
 
+    def _accepting_turns(self) -> bool:
+        """False once the conversation is over or handed off: late input must not reopen it."""
+        return not (self.lifecycle.terminal or self.state == VoiceState.TRANSFER_REQUESTED or self.c.state.ended)
+
     def _commit_turn(self, text: str, mode: str, speech_end: float | None, final_at: float | None) -> None:
+        if not self._accepting_turns():
+            self._reset_turn()
+            return
         full = " ".join(x for x in (self._carry_text, text) if x)
         self._carry_text = ""
         self._reset_turn()
@@ -433,6 +474,8 @@ class VoiceSession:
         self._process_task = asyncio.create_task(self._process(full, lat))
 
     async def _process(self, text: str, lat: TurnLatency) -> None:
+        if not self.lifecycle.can(VoiceState.PROCESSING) or not self._accepting_turns():
+            return
         self.lifecycle.to(VoiceState.PROCESSING, "turn_committed")
         caller_turn = Turn(len(self.turns), "caller", text, self.d.controller.clock.now())
         self.turns.append(caller_turn)
@@ -574,6 +617,8 @@ class VoiceSession:
         if not pb.task.cancelled() and pb.task.exception() is not None:
             self._provider_failure("tts", pb.task.exception())  # type: ignore[arg-type]
             self.emit("agent.text_only", {"text": text})
+            # Browser callers see the text on screen; a phone caller heard nothing.
+            return False, (0.0 if self.c.state.channel == Channel.PHONE else 1.0)
         return pb.interrupted, pb.fraction(self._mono())
 
     async def _play(self, pb: _Playback, lat: TurnLatency) -> None:

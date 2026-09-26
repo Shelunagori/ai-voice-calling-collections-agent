@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from ..providers.base import LLMProvider, ProviderError
 from .models import Language
-from .responses import ResponsePlan, guard
+from .responses import ResponsePlan, guard, numbers_match_template
 
 REALIZER_PROMPT_VERSION = "realize-v1"
 
@@ -68,6 +68,9 @@ class LLMRealizer:
             return Realization(template, "template_fallback", self._mono(), [], error=str(e)[:200])
         text = "".join(parts).strip()
         g = guard(text, plan)
-        if not text or not g.ok:
-            return Realization(template, "template_fallback", first, g.violations or ["empty"])
+        violations = list(g.violations)
+        if text and not numbers_match_template(text, template):
+            violations.append("number_not_in_approved_template")
+        if not text or violations:
+            return Realization(template, "template_fallback", first, violations or ["empty"])
         return Realization(text, "llm", first, [])

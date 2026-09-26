@@ -27,6 +27,7 @@ from ..domain.scenarios import SCENARIOS
 from ..observability import metrics, session_id_var
 from ..providers.factory import voice_capable
 from ..state import AppState
+from .routes import forwarded_client
 from .session_service import close_session, open_session
 
 log = logging.getLogger(__name__)
@@ -59,8 +60,7 @@ class BrowserTransport:
 
 
 def _client_ip(ws: WebSocket) -> str:
-    fwd = ws.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() if fwd else (ws.client.host if ws.client else "unknown")
+    return forwarded_client(ws.headers.get("x-forwarded-for", ""), ws.client.host if ws.client else "unknown")
 
 
 @router.websocket("/ws/session")
@@ -77,7 +77,7 @@ async def browser_session(ws: WebSocket) -> None:
     if scenario not in SCENARIOS or lang_q not in ("en", "ja") or mode not in ("text", "voice"):
         await ws.close(code=1008, reason="invalid parameters")
         return
-    if state.draining or len(state.sessions) >= s.max_concurrent_sessions:
+    if state.draining or len(state.sessions) + state.opening >= s.max_concurrent_sessions:
         await ws.close(code=1013, reason="busy, try again shortly")
         return
     if not state.limiter.allow("session", _client_ip(ws), s.rate_limit_sessions_per_minute, 60):
@@ -89,14 +89,18 @@ async def browser_session(ws: WebSocket) -> None:
 
     await ws.accept()
     transport = BrowserTransport(ws)
-    sess, rec = await open_session(
-        state,
-        scenario_key=scenario,
-        language=Language(lang_q),
-        channel=Channel.BROWSER,
-        input_mode=mode,
-        transport=transport,
-    )
+    state.opening += 1  # reserve the slot across the awaits below
+    try:
+        sess, rec = await open_session(
+            state,
+            scenario_key=scenario,
+            language=Language(lang_q),
+            channel=Channel.BROWSER,
+            input_mode=mode,
+            transport=transport,
+        )
+    finally:
+        state.opening -= 1
     sid = str(sess.c.state.session_id)
     session_id_var.set(sid)
     await transport.send_event(

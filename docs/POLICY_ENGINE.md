@@ -43,7 +43,11 @@ with the synthetic record. Denial at the name step → `WRONG_PARTY`.
 Becomes `CONFIRMED` only when: identity verified; amount and date pass every rule; the read-back
 ("Just to confirm: you'll pay ¥30,000 on …. Is that correct?") was played (≥ 90 %); the caller explicitly
 affirms; and the final confirmation gate re-runs all rules. Persisted with amount, currency, due date,
-confirmation turn, timestamp and the ids of the policy decisions that approved it. Corrections while the
+confirmation turn, timestamp and the ids of the policy decisions that approved it. Consent only answers the
+read-back that was *just* asked: any other reply while confirmation is pending (e.g. the no-discount answer)
+voids it, so a later "yes" re-triggers the read-back. A model "yes" never overrides an explicit "no" the
+deterministic parser heard. Three affirmations without a heard read-back (e.g. TTS failure on a phone call)
+escalate to a human instead of looping. Corrections while the
 read-back is pending replace only the corrected field. A hang-up with a pending proposal never becomes a
 promise.
 

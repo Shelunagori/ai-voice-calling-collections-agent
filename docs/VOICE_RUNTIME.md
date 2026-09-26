@@ -29,6 +29,11 @@ the transcript so far:
 | energy but no words after 1200 ms | turn discarded as noise (background speech, cough) |
 | hard ceiling | 2500 ms |
 
+With only a partial transcript the detector waits at least 1200 ms for the provider's final before
+committing on the partial. STT finals that arrive when no caller turn is open (late or stray) are discarded
+rather than leaking into the next turn. If the STT stream closes unexpectedly it is reopened (twice); after
+that a browser session degrades to typed input and a phone session ends with `stt_unavailable`.
+
 When VAD reports speech end the runtime sends the STT stream a `finalize` so the provider flushes promptly.
 With Cartesia `ink-whisper`, `max_silence_duration_secs` provides provider-side endpointing as well; the
 semantic decision above still gates committing the turn. Tested in `tests/test_nlu_turns_lifecycle.py` and
@@ -83,8 +88,9 @@ returns p50/p95/count per provider mode; Prometheus exposes histograms.
 Target: speech end → first agent audio < 1.5 s. Contributions (design, **not measurements**):
 - VAD hang (240 ms) + end-of-turn rule (250–600 ms, 1500 ms for thinking pauses) — tunable.
 - STT finalize → final transcript — provider dependent.
-- LLM understanding — one non-streaming JSON-mode call (JSON mode does not stream); bounded by
-  `LLM_TIMEOUT_S` with rules fallback. Likely the largest variable cost.
+- LLM understanding — one non-streaming JSON-mode call (JSON mode does not stream); one overall deadline
+  `LLM_TIMEOUT_S` (default 2.5 s, no retry after a timeout) then rules fallback. Likely the largest variable
+  cost.
 - Response text — templates add ~0 ms; `RESPONSE_MODE=llm` adds a second LLM round trip (off by default).
 - TTS time-to-first-audio — provider dependent.
 

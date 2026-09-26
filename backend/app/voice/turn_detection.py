@@ -64,9 +64,10 @@ class EndOfTurnDetector:
         if not t:
             return TurnDecision.NOISE if silence_ms >= self.cfg.transcript_grace_ms else TurnDecision.WAIT
         need = self.required_silence_ms(t)
-        if not transcript_final and need < self.cfg.default_ms:
-            # Do not fast-path a short answer on a partial transcript; it may still grow.
-            need = self.cfg.default_ms
+        if not transcript_final:
+            # Only a partial so far: give the provider time to deliver the final (it may
+            # still grow, e.g. "no" -> "no, the 20th") before committing on the partial.
+            need = max(need, self.cfg.transcript_grace_ms)
         if silence_ms >= need and not is_filler_only(t):
             return TurnDecision.COMPLETE
         # Filler-only ("um...") keeps waiting until the hard ceiling, then counts as noise.

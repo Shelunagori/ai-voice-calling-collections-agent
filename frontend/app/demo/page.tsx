@@ -162,6 +162,9 @@ export default function DemoPage() {
             <button className="btn primary" onClick={start} disabled={!scenario}>
               Start voice session
             </button>
+            <p className="small muted" style={{ margin: 0 }}>
+              Use the synthetic details only — do not type or say real personal information. Browser demo transcripts are stored and listed publicly on this demo.
+            </p>
           </div>
           <div className="panel">
             <h3>3 · Synthetic scenario</h3>

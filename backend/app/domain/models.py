@@ -155,7 +155,8 @@ class CollectionState:
 
     @property
     def ended(self) -> bool:
-        return self.call_status in TERMINAL_CALL_STATUSES
+        """No further caller turn may change state (call over, or handed to a human)."""
+        return self.call_status in TERMINAL_CALL_STATUSES or self.phase == DialogPhase.ENDED
 
     def snapshot(self) -> dict[str, Any]:
         """JSON-safe snapshot. Balance fields are included because this is the

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from typing import Any
 
@@ -62,7 +63,8 @@ def build_providers(s: Settings) -> Providers:
         )
         labels["telephony"] = "twilio"
     else:
-        telephony = FakeTelephony(auth_token=s.twilio_auth_token or "fake-token")
+        # Random per-process secret: with telephony off nothing can produce a valid signature.
+        telephony = FakeTelephony(auth_token=s.twilio_auth_token or secrets.token_hex(32))
         labels["telephony"] = "fake"
     return Providers(llm=llm, stt=stt, tts=tts, telephony=telephony, notifier=MockNotifier(), labels=labels)
 

@@ -187,6 +187,7 @@ class ConversationController:
         return out
 
     def on_disconnect(self, reason: str = "caller_hangup") -> None:
+        # A completed/handed-off call keeps its final status (e.g. TRANSFER_REQUESTED).
         if not self.state.ended:
             self.state.call_status = CallStatus.DISCONNECTED
             self.state.ended_reason = reason
@@ -216,6 +217,15 @@ class ConversationController:
 
     # ------------------------------------------------------------------ main entry
     def apply(self, interp: Interpretation, caller_text: str = "") -> TurnOutcome:
+        out = self._apply(interp, caller_text)
+        s = self.state
+        # Consent only ever answers the read-back that was *just* asked: any other reply
+        # while confirmation is pending (no-discount, balance info, ...) voids it.
+        if s.phase == DialogPhase.CONFIRMATION and out.plan.primary != Act.CONFIRM_PROPOSAL:
+            s.readback_delivered = False
+        return out
+
+    def _apply(self, interp: Interpretation, caller_text: str = "") -> TurnOutcome:
         self.turn_index += 1
         out = self._new_outcome()
         s = self.state
@@ -274,6 +284,7 @@ class ConversationController:
         out.effects.append(Effect.TRANSFER)
         out.state_changes += ["human_transfer_requested=true", f"transfer_reason={reason}"]
         s.phase = DialogPhase.ENDED
+        s.ended_reason = "transferred_to_human"
         self._plan([act], out)
         return out
 
@@ -460,6 +471,7 @@ class ConversationController:
             return out
         s.promise_status = PromiseStatus.PENDING_CONFIRMATION
         s.phase = DialogPhase.CONFIRMATION
+        s.unclear_count = 0
         self.audit.record(AuditType.PAYMENT_PROPOSAL_ALLOWED, self.turn_index, amount=amount, due_date=due.isoformat())
         out.state_changes += [
             f"proposed_amount={amount}",
@@ -479,10 +491,10 @@ class ConversationController:
             if not s.readback_delivered:
                 # The caller said "yes" before hearing the full read-back (e.g. they
                 # interrupted it). A "yes" to an unheard question is not consent.
-                self._record(
-                    self.policy.readback_not_delivered(s, self.clock.now()),
-                    out,
-                )
+                self._record(self.policy.readback_not_delivered(s, self.clock.now()), out)
+                s.unclear_count += 1
+                if s.unclear_count >= MAX_UNCLEAR_BEFORE_TRANSFER:
+                    return self._transfer(out, self.clock.now(), "confirmation_not_completed", Act.TRANSFER)
                 self._plan([Act.CONFIRM_PROPOSAL], out)
                 return out
             decisions = self.policy.evaluate_promise_confirmation(s, True, self.today(), self.clock.now())
@@ -555,8 +567,10 @@ class ConversationController:
 
     def mark_delivered(self, plan: ResponsePlan, played_fraction: float) -> None:
         """Called by the runtime once an utterance has been played (or cut off)."""
-        if Act.CONFIRM_PROPOSAL in plan.acts and self.state.phase == DialogPhase.CONFIRMATION:
-            self.state.readback_delivered = played_fraction >= READBACK_MIN_PLAYED
+        if self.state.phase != DialogPhase.CONFIRMATION:
+            return
+        ends_with_readback = bool(plan.acts) and plan.acts[-1] == Act.CONFIRM_PROPOSAL
+        self.state.readback_delivered = ends_with_readback and played_fraction >= READBACK_MIN_PLAYED
 
     def mark_transfer_status(self, status: TransferStatus, detail: str = "") -> None:
         self.state.transfer_status = status

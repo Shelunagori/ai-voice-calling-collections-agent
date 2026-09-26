@@ -48,3 +48,4 @@ class AppState:
     draining: bool = False
     policy_clock: Clock = field(default_factory=SystemClock)
     closing: set[Any] = field(default_factory=set)  # in-flight close_session tasks
+    opening: int = 0  # sessions being set up (reserved capacity)

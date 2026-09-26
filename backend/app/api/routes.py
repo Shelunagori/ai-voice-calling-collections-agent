@@ -28,9 +28,17 @@ def get_state(request: Request) -> AppState:
     return request.app.state.app_state
 
 
+def forwarded_client(xff: str, fallback: str) -> str:
+    """Right-most X-Forwarded-For entry: the address appended by the platform proxy
+    (Railway/Vercel). Entries to its left are client-controlled and spoofable."""
+    parts = [p.strip() for p in xff.split(",") if p.strip()]
+    return parts[-1] if parts else fallback
+
+
 def client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    return forwarded_client(
+        request.headers.get("x-forwarded-for", ""), request.client.host if request.client else "unknown"
+    )
 
 
 def require_operator(request: Request, state: AppState = Depends(get_state)) -> None:
@@ -123,10 +131,15 @@ async def list_sessions(limit: int = 20, state: AppState = Depends(get_state)) -
 
 
 @router.get("/api/sessions/{session_id}")
-async def session_detail(session_id: uuid.UUID, state: AppState = Depends(get_state)) -> dict[str, Any]:
+async def session_detail(
+    session_id: uuid.UUID, request: Request, state: AppState = Depends(get_state)
+) -> dict[str, Any]:
     d = await state.repo.get_session_detail(session_id)
     if not d:
         raise HTTPException(404, "session not found")
+    if d["session"].get("channel") == "phone":
+        # Phone sessions involve a real person's voice/number: operator only.
+        require_operator(request, state)
     return d
 
 

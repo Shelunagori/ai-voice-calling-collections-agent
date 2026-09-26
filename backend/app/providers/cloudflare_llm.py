@@ -69,12 +69,10 @@ class CloudflareLLM:
                     self._client.post(self._url, headers=self._headers, json=body), timeout=timeout
                 )
             except (TimeoutError, httpx.TimeoutException) as e:
-                err = ProviderError(self.name, ErrorKind.TIMEOUT, f"no response in {timeout}s", retryable=True)
+                # Not retried: a second full timeout would blow the turn's latency budget;
+                # the caller falls back to the deterministic parser instead.
                 metrics.inc("provider_errors", {"provider": "cloudflare_llm", "kind": "timeout"})
-                if attempt < self.max_retries:
-                    attempt += 1
-                    continue
-                raise err from e
+                raise ProviderError(self.name, ErrorKind.TIMEOUT, f"no response in {timeout}s", retryable=True) from e
             except httpx.HTTPError as e:
                 metrics.inc("provider_errors", {"provider": "cloudflare_llm", "kind": "unavailable"})
                 if attempt < self.max_retries:

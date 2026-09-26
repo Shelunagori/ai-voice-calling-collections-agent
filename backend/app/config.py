@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     cloudflare_api_token: str = ""
     cloudflare_ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
     cloudflare_judge_model: str = ""
-    llm_timeout_s: float = 4.0
+    llm_timeout_s: float = 2.5
     llm_max_retries: int = 1
 
     # Cartesia

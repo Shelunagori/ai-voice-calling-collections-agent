@@ -79,5 +79,6 @@ executed; no accuracy numbers are claimed.** Recorded human audio (with consent)
 (barge-in, stale audio, noise, read-back safety, silence, transfer), wall-clock barge-in latency, API and
 WebSocket flows, Twilio webhooks/signatures/idempotency/media stream, provider contracts (Cloudflare,
 Cartesia, Twilio against local fakes), persistence on SQLite and PostgreSQL (`TEST_DATABASE_URL`),
-migration-vs-model check. Live provider tests are opt-in (`RUN_LIVE_PROVIDER_TESTS=1`).
+migration-vs-model check, and `test_review_regressions.py` (one red-first test per defect found in the
+adversarial review). Live provider tests are opt-in (`RUN_LIVE_PROVIDER_TESTS=1`).
 `cd frontend && npm test` — reducer, generation gate, formatting.

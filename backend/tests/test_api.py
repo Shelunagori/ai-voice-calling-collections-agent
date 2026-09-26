@@ -250,7 +250,7 @@ def test_media_stream_session(tclient):
         assert got_media["event"] == "media" and got_media["streamSid"] == "MZ1"
         ws.send_text(json.dumps({"event": "stop"}))
     for _ in range(50):
-        d = tclient.get(f"/api/sessions/{sid}").json()
+        d = tclient.get(f"/api/sessions/{sid}", headers={"Authorization": "Bearer op-secret"}).json()
         if d.get("session", {}).get("ended_at"):
             break
         time.sleep(0.05)

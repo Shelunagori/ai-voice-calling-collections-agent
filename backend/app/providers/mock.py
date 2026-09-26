@@ -210,8 +210,10 @@ class FakeTelephony:
     name = "fake"
     live = False
 
-    def __init__(self, auth_token: str = "fake-token") -> None:  # noqa: S107 - not a secret
-        self.auth_token = auth_token
+    def __init__(self, auth_token: str | None = None) -> None:
+        import secrets
+
+        self.auth_token = auth_token or secrets.token_hex(32)
         self.calls: list[dict[str, str]] = []
         self.transfers: list[dict[str, str]] = []
         self.hangups: list[str] = []
@@ -229,9 +231,9 @@ class FakeTelephony:
         self.hangups.append(call_id)
 
     def validate_signature(self, url: str, params: dict[str, str], signature: str) -> bool:
-        from ..telephony.signature import compute_twilio_signature
+        from ..telephony.signature import validate_twilio_signature
 
-        return compute_twilio_signature(self.auth_token, url, params) == signature
+        return validate_twilio_signature(self.auth_token, url, params, signature)
 
 
 class MockNotifier:

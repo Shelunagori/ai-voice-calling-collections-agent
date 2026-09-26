@@ -66,7 +66,7 @@ Full script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 | Conversation controller + typed proposals (`Interpretation`/`ProposedAction`) | Implemented, tested |
 | Policy engine (identity, disclosure, min amount, ≤ balance, date window, no discounts, stop-contact, transfer, calling hours, attempt limits, single promise) | Implemented, tested, audited |
 | Promise-to-pay (verified + valid + read-back fully played + explicit yes + policy) | Implemented, tested; DB-unique per session |
-| Output guard (no amounts/debt words before verification; only approved amounts/dates; no threats/waivers) | Implemented, tested |
+| Output guard (no amounts/debt words before verification; only approved amounts/dates in ¥/円/yen/JPY/spoken forms; no threats/waivers) + LLM rephrasings may not introduce any number absent from the approved template | Implemented, tested |
 | Voice runtime: energy VAD with noise floor, semantic end-of-turn, barge-in, generation-tagged paced playback, lifecycle state machine | Implemented, tested (virtual clock + wall clock) |
 | Latency instrumentation (per-stage marks, p50/p95 by provider mode) | Implemented |
 | English / Japanese (templates, number/date/era parsing, currency formatting, provider language params) | Implemented; **not native-speaker reviewed** |
@@ -77,7 +77,7 @@ Full script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 | Persistence (PostgreSQL/SQLite, Alembic), audit trail, transcript retention purge | Implemented, tested on PostgreSQL 16 and SQLite |
 | Observability: JSON logs + correlation ids, Prometheus `/metrics`, `/health`, `/ready` | Implemented |
 | Evaluation harness (30 cases), mock heuristic judge, Cloudflare LLM judge, audio fixture harness | Implemented; LLM judge and STT benchmark **not executed** (no credentials) |
-| Security: operator bearer token, allow-listed dialling, rate limits, payload limits, WS origin check, signature validation | Implemented |
+| Security: operator bearer token, allow-listed dialling, telephony routes absent unless configured, Twilio signature + per-call media token, rate limits (proxy-appended client IP), payload limits, WS origin check, phone-session audit data operator-only | Implemented |
 
 ## 6. What is simulated
 
