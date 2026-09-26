@@ -41,6 +41,8 @@ WebSocket closes), so nothing can be spoofed on a default deployment.
    pick scenario and language, **Start Call**. The Next.js server forwards the request with the server-only
    `OPERATOR_TOKEN` (also set on the frontend); the page shows the policy decisions, session id and Twilio
    call id, polls the session's `call_status` until it is terminal, and links to the session audit page.
+   Contact eligibility shows each scenario's debtor and every number where someone asked to stop; a
+   stop-contact heard on a call blocks every later call to that number, for every scenario.
    curl against Railway with the bearer token still works. Resetting demo accounts is curl-only
    (`POST /api/operator/reset-demo`). Calling to Japan from a non-Japanese number may need Twilio
    geo-permissions enabled.

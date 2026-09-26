@@ -18,7 +18,7 @@
 |---|---|---|
 | `DEMO_CALLING_HOURS_WINDOW` | before an outbound call | with `POLICY_COUNTRY=JP` (default): block outside `POLICY_CALLING_START_HOUR`–`POLICY_CALLING_END_HOUR` in `POLICY_TIMEZONE` (08:00–21:00 Asia/Tokyo). Any other or empty `POLICY_COUNTRY`: `NOT_APPLICABLE` (never a silent ALLOW under the Japanese window). Always `NOT_APPLICABLE` for reviewer-initiated browser sessions |
 | `MAX_CONTACT_ATTEMPTS` | before an outbound call | block at ≥ 3 attempts (configurable); runs for every `POLICY_COUNTRY` |
-| `STOP_CONTACT_BLOCKS_CONTACT` | before an outbound call | block if the account has a stop-contact flag; runs for every `POLICY_COUNTRY` |
+| `STOP_CONTACT_BLOCKS_CONTACT` | before an outbound call | block if the account, **its debtor**, or **the destination number (contact point)** has an active stop-contact request; `details.scopes` names which; runs for every `POLICY_COUNTRY` |
 | `IDENTITY_REQUIRED_BEFORE_DISCLOSURE` | greeting, any request for details, every payment evaluation | disclosure only when `identity_status == VERIFIED` |
 | `WRONG_PARTY_NO_DISCLOSURE` | caller says they are not the account holder | block disclosure, end politely |
 | `IDENTITY_ATTEMPT_LIMIT` | failed date-of-birth check | after 2 failures → `FAILED`, end call |
@@ -28,7 +28,7 @@
 | `NO_DISCOUNT_AUTHORITY` | discount / waiver request | always block (agent has no authority) |
 | `PROMISE_REQUIRES_EXPLICIT_CONFIRMATION` | confirmation | explicit affirm **to a read-back that was fully played** |
 | `ONE_CONFIRMED_PROMISE_PER_SESSION` | any later proposal | block; also a DB unique constraint |
-| `STOP_CONTACT_HONOURED` | caller asks for no contact (any phase, verified or not) | stop_contact = true, future_contact_eligible = false, end call; account flag persisted |
+| `STOP_CONTACT_HONOURED` | caller asks for no contact (any phase, verified or not) | stop_contact = true, future_contact_eligible = false, end call; persisted for the debtor (all accounts) and, on phone calls, the contact point |
 | `HUMAN_TRANSFER_ON_REQUEST` | caller asks for a person, disputes the debt, or 3 unclear turns | deterministic transfer state |
 | Output guard (`responses.guard`) | every spoken reply | before verification: no amounts or debt vocabulary; after: only approved amounts/dates; never threats or waivers |
 

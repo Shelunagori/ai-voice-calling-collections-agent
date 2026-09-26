@@ -59,6 +59,14 @@ fell back to an unconstrained parser that read a birth year as money. The phase 
 (schema, parser, validation, controller) and partial DOBs are a typed action. Trade-off: in identity phases
 payment talk ("I'll pay 20,000") is answered with a clarification instead of the pre-verification line.
 
+**D16 — Stop-contact scope: debtor + contact point.** Found on a real PSTN call: stop-contact on
+Scenario E did not block Scenario A to the same number, because the flag lived on E's account and each
+scenario is a different synthetic debtor. A request now applies to the debtor (every account) and to the
+number where it was heard (the person on the line), stored as a salted hash plus a masked label. Blocking by
+raw number alone was rejected because unrelated debtors can share a number; blocking the debtor alone would
+not have covered the observed case. Limitation: existing contact points cannot be backfilled (numbers were
+never stored), so flags recorded before migration 0002 apply at debtor level only.
+
 **D12 — Evaluation on a virtual clock.** Makes the suite deterministic and fast; wall-clock behaviour is
 covered separately (`tests/test_wallclock_barge_in.py`). Latency numbers from the suite are labelled as
 virtual/pipeline-only.
