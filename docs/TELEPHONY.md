@@ -1,0 +1,44 @@
+# Telephony (Twilio)
+
+Status: **implemented behind `TelephonyProvider`, tested with fakes, never exercised against the real PSTN
+from this repository.** Disabled by default (`TELEPHONY_ENABLED=false`); the app boots and the browser demo
+works without it.
+
+## Flow
+
+1. Operator calls `POST /api/operator/calls` with `Authorization: Bearer $OPERATOR_TOKEN` and
+   `{"to": "+81…", "scenario": "A", "language": "ja"}`. Checks: telephony active, per-IP rate limit, E.164
+   format, number on `DEMO_CALL_ALLOWED_NUMBERS`, then the contact policy (calling window in Asia/Tokyo,
+   attempt limit, account stop-contact). Blocked → `{"status": "blocked_by_policy", decisions}` and nothing is
+   dialled. Allowed → Twilio `Calls.json` with status callbacks; attempts are incremented.
+2. Twilio requests `POST /telephony/twilio/voice?session_id=…` — `X-Twilio-Signature` validated against
+   `TWILIO_WEBHOOK_BASE_URL + path + query`. Response TwiML:
+   `<Connect><Stream url="wss://…/telephony/twilio/media">` with `session_id` and an HMAC token parameter.
+   Unknown/inbound calls get a fresh verification-first session (scenario A, Japanese).
+3. `WS /telephony/twilio/media` — on `start`, the HMAC token is verified (constant time), then a
+   `VoiceSession(channel=PHONE, input_mode=voice)` starts. `media` payloads (μ-law 8 kHz) are converted to
+   PCM16 16 kHz; agent audio goes back as `media` events; barge-in sends `clear`. `stop` → session ends.
+4. `POST /telephony/twilio/status` — signed; de-duplicated by `CallSid:CallStatus:SequenceNumber` in
+   `telephony_webhooks` (Twilio retries); terminal statuses end the live session (`call_completed`,
+   `call_no-answer`, …).
+5. Human transfer: the controller sets the transfer state; with `TWILIO_TRANSFER_NUMBER` the adapter updates
+   the live call with `<Dial>`; otherwise the transfer is recorded as `SIMULATED`.
+6. If the session ends for any reason other than caller hang-up or transfer, the adapter hangs the call up.
+
+## Setup (human steps)
+
+1. Twilio account, a voice-capable number (`TWILIO_PHONE_NUMBER`). **Trial accounts can only call verified
+   caller IDs** and play a trial preamble; do not try to work around this.
+2. Deploy the backend on a public HTTPS URL; set `TWILIO_WEBHOOK_BASE_URL` to it exactly (scheme + host, no
+   trailing slash) — signature validation depends on it.
+3. Set `TELEPHONY_ENABLED=true`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `OPERATOR_TOKEN`,
+   `DEMO_CALL_ALLOWED_NUMBERS` (your own verified number), optionally `TWILIO_TRANSFER_NUMBER`.
+4. Optional inbound: point the number's Voice webhook to `POST {base}/telephony/twilio/voice`.
+5. Use the `/operator` page (token held in memory only) or curl to place a call. Calling to Japan from a
+   non-Japanese number may need Twilio geo-permissions enabled.
+
+## Security
+
+Signatures on every HTTP webhook; per-call HMAC on the media WebSocket; operator bearer token compared in
+constant time; allow-listed destinations; credentials only on the server; no credentials in logs (JSON
+formatter redacts token-like values).

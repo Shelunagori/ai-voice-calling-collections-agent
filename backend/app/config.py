@@ -9,12 +9,15 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # Reads backend/.env or the repository-root .env (later files take priority).
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True
+    )
 
     app_env: Literal["local", "test", "staging", "production"] = "local"
     port: int = 8000
@@ -156,7 +159,8 @@ def settings_for_tests(**overrides: object) -> Settings:
         "telephony_enabled": False,
     }
     base.update(overrides)
-    return Settings(**base)  # type: ignore[arg-type]
+    # Tests never read developer .env files (which may hold real credentials).
+    return Settings(_env_file=None, **base)  # type: ignore[arg-type,call-arg]
 
 
-__all__ = ["Field", "Settings", "get_settings", "settings_for_tests"]
+__all__ = ["Settings", "get_settings", "settings_for_tests"]

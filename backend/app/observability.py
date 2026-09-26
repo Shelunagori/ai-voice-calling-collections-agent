@@ -55,7 +55,7 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.handlers = [h]
     root.setLevel(level.upper())
-    for noisy in ("uvicorn.access", "httpx", "websockets"):
+    for noisy in ("uvicorn.access", "httpx", "websockets", "alembic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

@@ -1,0 +1,36 @@
+# Local full stack with PostgreSQL and mock providers (no paid APIs needed).
+#   docker compose up --build
+# Frontend: http://localhost:3000   Backend: http://localhost:8000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vca
+      POSTGRES_PASSWORD: vca
+      POSTGRES_DB: vca
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vca"]
+      interval: 3s
+      retries: 20
+    ports: ["5432:5432"]
+  backend:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://vca:vca@db:5432/vca
+      APP_ENV: local
+      FRONTEND_URL: http://localhost:3000
+      PORT: "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports: ["8000:8000"]
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    depends_on: [backend]
+    ports: ["3000:3000"]
