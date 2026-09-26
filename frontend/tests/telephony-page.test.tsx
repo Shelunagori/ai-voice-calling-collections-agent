@@ -14,6 +14,9 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 const CAP = { telephony: { active: true, operator_endpoints: true, allowed_numbers_configured: 1, transfer_number_configured: false, enabled_flag: true, configured: true } };
 const SCENARIOS = [{ key: "A", title: "Cooperative debtor" }, { key: "B", title: "Needs more time" }];
 
+let accounts: unknown[] = [];
+let contactPoints: unknown[] = [];
+
 function install(call: () => Response | Promise<Response>, detail: () => Response = () => json(404, { ok: false, code: "not_found" })) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal(
@@ -22,7 +25,8 @@ function install(call: () => Response | Promise<Response>, detail: () => Respons
       calls.push({ url, init });
       if (url.endsWith("/api/capabilities")) return json(200, CAP);
       if (url.endsWith("/api/scenarios")) return json(200, SCENARIOS);
-      if (url.endsWith("/api/accounts")) return json(200, []);
+      if (url.endsWith("/api/accounts")) return json(200, accounts);
+      if (url.endsWith("/api/contact-points")) return json(200, contactPoints);
       if (url === "/api/operator/calls") return call();
       if (url.startsWith("/api/operator/sessions/")) return detail();
       throw new Error(`unexpected ${url}`);
@@ -43,7 +47,11 @@ function fill(to = "+81 90-1234-5678") {
   fireEvent.change(screen.getByPlaceholderText("+819012345678"), { target: { value: to } });
 }
 
-beforeEach(() => vi.resetModules());
+beforeEach(() => {
+  vi.resetModules();
+  accounts = [];
+  contactPoints = [];
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -142,5 +150,21 @@ describe("Start Call", () => {
     });
     await waitFor(() => expect(screen.getByTestId("call-error").dataset.code).toBe(code));
     expect(screen.getByTestId("call-error").textContent).toMatch(text);
+  });
+});
+
+describe("Contact eligibility", () => {
+  it("shows every account of a stopped debtor and the stopped number as not eligible", async () => {
+    accounts = [
+      { scenario_key: "A", debtor_name: "Haruto Sato", contact_attempts: 1, stop_contact: false, stop_contact_at: null, debtor_stop_contact: false, eligible: true },
+      { scenario_key: "E", debtor_name: "Daiki Ito", contact_attempts: 1, stop_contact: true, stop_contact_at: "2026-09-26T16:40:00", debtor_stop_contact: true, debtor_stop_contact_at: "2026-09-26T16:40:00", eligible: false },
+    ];
+    contactPoints = [{ label: "+91•••••••008", stop_contact: true, stop_contact_at: "2026-09-26T16:40:00" }];
+    install(() => json(200, {}));
+    await renderPage();
+    await waitFor(() => expect(screen.getByTestId("account-E").textContent).toContain("not eligible · debtor stop-contact"));
+    expect(screen.getByTestId("account-A").textContent).toContain("eligible");
+    expect(screen.getByTestId("contact-points").textContent).toContain("+91•••••••008");
+    expect(screen.getByTestId("contact-points").textContent).toContain("blocked for every scenario");
   });
 });
