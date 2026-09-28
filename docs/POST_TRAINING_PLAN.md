@@ -1,7 +1,9 @@
-# Post-training plan (not performed)
+# Post-training plan
 
-**No SFT, DPO or RL has been performed for this POC.** This document describes how production call data
-could safely improve the language components, and what would gate each step.
+**Status (2026-09-28):** SFT of the interpreter has been performed on synthetic data — see
+[POST_TRAINING_RESULTS.md](POST_TRAINING_RESULTS.md) (held-out exact match 0% → 90.6% for Gemma-2B + LoRA).
+No DPO or RL, and no customer data. This document describes how *production call data* could safely
+improve the language components, and what would gate each step.
 
 ## What could be trained
 

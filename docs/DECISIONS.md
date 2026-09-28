@@ -77,3 +77,16 @@ emergency/dev escape hatch (off by default, logged CRITICAL).
 **D12 — Evaluation on a virtual clock.** Makes the suite deterministic and fast; wall-clock behaviour is
 covered separately (`tests/test_wallclock_barge_in.py`). Latency numbers from the suite are labelled as
 virtual/pipeline-only.
+
+**D18 — Ground model numbers against the transcript, not against the parser.** The merge rule "the
+deterministic parser is the evidence" discarded correct model readings whenever the parser misread the same
+span ("April 12 19 88" → parser day=19; "60 thousand" → parser 1000): the 70B model scored 100% on split
+years raw and 12.5% through the runtime. `nlu_rules.number_evidence` now lists every number the caller said
+in any surface form; a model number is kept if it is in that set, replaced by the parser's value or dropped
+otherwise, and never invented. A parser "day" that is the first half of a split year is discarded. Caller-
+rights safety net, out-of-phase dropping and DOB non-padding are unchanged.
+
+**D19 — Post-train the interpreter, keep the authority layer deterministic.** Gemma-2B + LoRA on synthetic
+rows, trained and served on the exact production prompt (`app/training/format.py`), benchmarked on a frozen
+held-out set with caller-rights recall as a hard gate. Served through Cloudflare BYO-LoRA behind
+`CLOUDFLARE_AI_LORA`; the 70B JSON-mode path stays the default because the LoRA beta path measured 4.1 s p50.

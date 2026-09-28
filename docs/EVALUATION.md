@@ -52,6 +52,22 @@ caller rights: `stop_contact`, `stop_contact_unverified`, `human_transfer` · ba
 
 Latency figures inside the report are virtual-clock pipeline timings, not provider latency.
 
+## NLU held-out benchmark
+
+`app/evaluation/nlu_bench.py` scores any language-layer provider on the frozen held-out set
+(`training/data/heldout.jsonl`, 117 rows, hash pinned by `tests/test_training_dataset.py`):
+
+```bash
+python -m app.evaluation.nlu_bench --provider rules
+python -m app.evaluation.nlu_bench --provider cloudflare --path raw       # model alone
+python -m app.evaluation.nlu_bench --provider cloudflare --path runtime   # Understanding: model + rules merge
+python -m app.evaluation.nlu_bench --provider cloudflare --lora <finetune> --path raw
+```
+
+Metrics: action match, exact match (actions **and** slots), slot match, JSON validity, caller-rights
+recall (STOP_CONTACT / REQUEST_HUMAN must never be dropped — a hard gate, exit code 2), p50/p95 latency.
+Results and the before/after story are in [POST_TRAINING_RESULTS.md](POST_TRAINING_RESULTS.md).
+
 ## LLM-as-judge (supplementary)
 
 `app/evaluation/judge.py`. Dimensions: naturalness, task completion, policy adherence,

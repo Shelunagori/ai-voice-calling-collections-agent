@@ -46,6 +46,7 @@ within deterministic policy constraints, handles interruptions, and produces a f
 | Audit trail: every policy decision, identity step, barge-in, lifecycle transition | `/sessions` |
 | Per-turn latency breakdown (STT final, end-of-turn, NLU, policy, TTS first audio) | `app/voice/latency.py` |
 | Browser voice demo (mic via AudioWorklet, or typed input) on the same runtime | `/demo` |
+| **Post-trained NLU:** Gemma-2B + LoRA (synthetic data, held-out exact match 0% → **90.6%**, above the 70B zero-shot model), servable via Cloudflare BYO-LoRA | `app/training/`, [results](docs/POST_TRAINING_RESULTS.md) |
 
 **Simulated / demo-only:**
 
@@ -97,6 +98,29 @@ template (or guarded LLM rephrase) → streaming TTS. Details: [docs/ARCHITECTUR
   - start a transfer on its own.
 - **Guarded rephrasing.** Replies come from templates by default. An optional LLM rephrasing may not
   introduce any number that is absent from the approved template.
+
+## Post-training (SFT) with measured improvement
+
+The interpreter (caller utterance → typed action JSON) was fine-tuned: `google/gemma-2b-it` + LoRA
+(r=8) on 1,136 synthetic rows, evaluated on a **frozen held-out set of 117** with a benchmark that
+scores actions and slots exactly and treats a dropped caller-rights intent as a hard failure.
+
+| Provider (held-out n=117) | exact match | latency p50 |
+|---|---:|---:|
+| Deterministic rules parser | 88.9% | ~0 ms |
+| Llama-3.3-70B zero-shot (Cloudflare) | 88.0% | 1,005 ms |
+| Gemma-2B-it zero-shot | 0.0% | — |
+| **Gemma-2B-it + LoRA v2** (local T4) | **90.6%** | 1.3 s batched |
+| Gemma-2B-it + LoRA v2 on Cloudflare BYO-LoRA | 85.5% | 4.1 s |
+
+- v1 (737 rows) scored 82.9%; v2 added 399 rows targeted at v1's held-out failures without touching the
+  held-out file (multi-intent 0 → 67%, injection 0 → 100%, JA 79.5 → 86.4%).
+- The merge layer that combines the model with the rules parser was found to discard correct model
+  readings (split years, spelled amounts); it now grounds numbers against the transcript itself.
+- Honest limits: the raw model still misses one Japanese human-transfer phrasing (the rules parser covers
+  it on the runtime path); Cloudflare's BYO-LoRA beta serves the adapter at 4.1 s p50, so the latency
+  budget is not met on that path and self-hosted serving is the next step; Japanese training rows are not
+  native-reviewed. Full write-up: [docs/POST_TRAINING_RESULTS.md](docs/POST_TRAINING_RESULTS.md).
 
 ## Engineering findings from real PSTN tests
 
@@ -220,8 +244,9 @@ Synthetic identities and DOBs are shown on each scenario card. Walkthrough:
   barge-in and turn-taking; headphones help.
 - Demo rate limits and the allowlist are intentionally restrictive; the in-process session state requires a
   single replica.
-- Japanese has not been reviewed by a native speaker. No post-training has been done
-  ([plan](docs/POST_TRAINING_PLAN.md)).
+- Japanese has not been reviewed by a native speaker. Post-training covers the interpreter only, on
+  synthetic data ([results](docs/POST_TRAINING_RESULTS.md)); the fine-tuned adapter is not the production
+  interpreter yet because of the serving latency finding.
 
 ## Measured latency (detail)
 
@@ -300,7 +325,8 @@ backend/app/voice/        session runtime, VAD, end-of-turn, lifecycle, latency
 backend/app/providers/    interfaces, mocks, Cloudflare, Cartesia, Twilio
 backend/app/api/          REST, browser WebSocket, Twilio webhooks + media stream
 backend/app/persistence/  schema, repository, DB recorder        backend/alembic/  migrations
-backend/app/evaluation/   32 scenario cases, runner, judges
+backend/app/evaluation/   32 scenario cases, runner, judges, NLU held-out benchmark
+backend/app/training/     dataset generator, prompt format (train == serve)   backend/training/  LoRA trainer, notebook, data, reports
 frontend/                 Next.js console: /demo, /telephony, /sessions, /evaluation, /architecture
 docs/                     architecture, voice runtime, policy, evaluation, telephony, deployment, decisions
 ```
@@ -315,6 +341,6 @@ docs/                     architecture, voice runtime, policy, evaluation, telep
 - real SMS/e-mail providers;
 - counsel-reviewed consent and recording disclosures;
 - native-speaker review;
-- post-training ([plan](docs/POST_TRAINING_PLAN.md)).
+- self-hosted serving of the post-trained interpreter ([results](docs/POST_TRAINING_RESULTS.md), [plan](docs/POST_TRAINING_PLAN.md)).
 
 Design decisions and trade-offs: [docs/DECISIONS.md](docs/DECISIONS.md).

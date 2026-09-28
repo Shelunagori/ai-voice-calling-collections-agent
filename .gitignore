@@ -26,3 +26,6 @@ eval-reports/
 backend/fixtures/audio/generated/
 frontend/e2e/out/
 backend/training/adapter*/
+_to_delete/
+twilio-session.json
+backend/.wrangler/
