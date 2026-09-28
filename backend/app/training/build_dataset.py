@@ -840,7 +840,7 @@ def gen(rng: random.Random) -> list[Example]:
             "Yes, but I can only pay 20,000 yen.",
             Language.EN,
             DialogPhase.CONFIRMATION,
-            [A(Action.AFFIRM), A(Action.PROPOSE_PAYMENT, amount=20_000)],
+            [A(Action.DENY), A(Action.PROPOSE_PAYMENT, amount=20_000)],  # not consent to the read-back terms
         ),
         (
             "Stop calling me, this isn't even my debt.",
@@ -882,7 +882,7 @@ def gen(rng: random.Random) -> list[Example]:
             "はい、でも2万円しか払えません。",
             Language.JA,
             DialogPhase.CONFIRMATION,
-            [A(Action.AFFIRM), A(Action.PROPOSE_PAYMENT, amount=20_000)],
+            [A(Action.DENY), A(Action.PROPOSE_PAYMENT, amount=20_000)],  # not consent to the read-back terms
         ),
         (
             "もう電話しないでください。身に覚えがありません。",

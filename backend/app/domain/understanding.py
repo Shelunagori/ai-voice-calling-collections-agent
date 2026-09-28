@@ -52,6 +52,19 @@ The agent's last question was: "{last_agent}".
 Return only JSON matching the schema."""
 
 
+def build_system_prompt(ctx: TurnContext, today: date, language: Language, last_agent: str) -> str:
+    """The exact system prompt the runtime sends. The NLU benchmark and the post-training data
+    pipeline call this too, so a model is always trained and evaluated on what production feeds it."""
+    return _SYSTEM.format(
+        actions=", ".join(sorted(a.value for a in ctx.allowed)),
+        today=today.isoformat(),
+        language="Japanese" if language == Language.JA else "English",
+        phase=ctx.phase.value,
+        slot=ctx.expected_slot.value,
+        last_agent=last_agent[:300].replace('"', "'"),
+    )
+
+
 @dataclass
 class UnderstandingResult:
     interpretation: Interpretation
@@ -82,14 +95,7 @@ class Understanding:
             return _result(rules)
 
         started = self._mono()
-        system = _SYSTEM.format(
-            actions=", ".join(sorted(a.value for a in ctx.allowed)),
-            today=today.isoformat(),
-            language="Japanese" if language == Language.JA else "English",
-            phase=ctx.phase.value,
-            slot=ctx.expected_slot.value,
-            last_agent=last_agent[:300].replace('"', "'"),
-        )
+        system = build_system_prompt(ctx, today, language, last_agent)
         vnotes: list[str] = []
         try:
             # One overall deadline for the whole call, retries included (latency budget).
@@ -240,3 +246,8 @@ def merge(
         merged = constrain(merged, ctx)
         notes = [n for n in merged.notes]
     return merged, list(dict.fromkeys(notes))
+
+
+def validate_llm_output(raw: Any, notes: list[str] | None = None) -> Interpretation:
+    """Public entry point for `_validate` (benchmark / offline evaluation)."""
+    return _validate(raw, notes)
