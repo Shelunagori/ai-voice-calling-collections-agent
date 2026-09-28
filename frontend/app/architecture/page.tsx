@@ -90,7 +90,7 @@ const ROWS: [string, string, string][] = [
   ["Cloudflare / Cartesia / Twilio", "Adapters implemented", "Contract-tested against local fakes; live use requires credentials (not exercised in CI)."],
   ["Human transfer", "Domain-level", "Deterministic state; live PSTN <Dial> only when Twilio + transfer number are configured."],
   ["SMS / e-mail", "Interface + mock", "Notifier interface; promise confirmations go to a mock outbox."],
-  ["Production post-training", "Planned", "See docs/POST_TRAINING_PLAN.md — nothing has been trained."],
+  ["NLU post-training (SFT)", "Done on synthetic data", "Gemma-2B + LoRA on 1,136 rows; frozen held-out exact match 0% → 90.6% (70B zero-shot 88.0%). Servable via Cloudflare BYO-LoRA (4.1 s p50, so 70B stays live); no customer data. See docs/POST_TRAINING_RESULTS.md."],
 ];
 
 export default function Architecture() {
