@@ -8,6 +8,10 @@ within deterministic policy constraints, handles interruptions, and produces a f
 **Sessions & audit:** https://ai-voice-calling-collections-agent.vercel.app/sessions ·
 **Backend health:** https://ai-voice-calling-collections-agent-production.up.railway.app/ready
 
+![Demo: Japanese browser session (identity, barge-in, promise) and a real PSTN call's audit trail](docs/demo.gif)
+
+*73-second demo: a Japanese browser session with typed input on the deployed stack, then the audit trail of a real PSTN call. Recorded by [`frontend/e2e/record_demo.py`](frontend/e2e/record_demo.py).*
+
 > **Portfolio proof-of-concept.** Synthetic identities and synthetic accounts only. The policy rules are
 > *simulated demo rules inspired by regulated collections workflows*. They are not a statement of Japanese
 > law, have not been reviewed by counsel and are not certified. Do not use this system to contact real

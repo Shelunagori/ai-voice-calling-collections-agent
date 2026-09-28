@@ -23,3 +23,4 @@ next-env.d.ts
 .DS_Store
 eval-reports/
 backend/fixtures/audio/generated/
+frontend/e2e/out/
