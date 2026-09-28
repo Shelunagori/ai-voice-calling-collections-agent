@@ -68,7 +68,7 @@ def cmd_train(a: argparse.Namespace) -> int:
         tok.pad_token = tok.eos_token
     dtype = pick_dtype(a.dtype)
     model = AutoModelForCausalLM.from_pretrained(
-        a.base, torch_dtype=dtype, device_map="auto" if torch.cuda.is_available() else None
+        a.base, dtype=dtype, device_map="auto" if torch.cuda.is_available() else None
     )
     model.config.use_cache = False
     if hasattr(model, "enable_input_require_grads"):
@@ -116,7 +116,7 @@ def cmd_train(a: argparse.Namespace) -> int:
         gradient_accumulation_steps=a.grad_accum,
         learning_rate=a.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=0.05,
+        warmup_steps=8,
         logging_steps=10,
         save_strategy="no",
         report_to=[],
@@ -159,7 +159,7 @@ def cmd_eval(a: argparse.Namespace) -> int:
         tok.pad_token = tok.eos_token
     dtype = pick_dtype(a.dtype)
     model = AutoModelForCausalLM.from_pretrained(
-        a.base, torch_dtype=dtype, device_map="auto" if torch.cuda.is_available() else None
+        a.base, dtype=dtype, device_map="auto" if torch.cuda.is_available() else None
     )
     if a.adapter:
         from peft import PeftModel

@@ -25,3 +25,4 @@ next-env.d.ts
 eval-reports/
 backend/fixtures/audio/generated/
 frontend/e2e/out/
+backend/training/adapter*/

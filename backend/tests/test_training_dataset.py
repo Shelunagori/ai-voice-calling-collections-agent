@@ -122,3 +122,14 @@ def test_number_helpers() -> None:
     assert bd.wareki(1988) == "昭和63年"
     assert bd.wareki(1989) == "平成元年"
     assert bd.wareki(1990) == "平成2年"
+
+
+def test_v2_augmentation_is_train_only_and_heldout_is_unchanged(built: tuple[list[dict], list[dict]]) -> None:
+    """Rows added after the v1 adapter's failures may never leak into the frozen held-out set."""
+    train, heldout = built
+    assert not any("v2" in r["tags"] for r in heldout)
+    assert sum("v2" in r["tags"] for r in train) >= 300
+    # the held-out file is the same one v1 was scored on
+    import hashlib
+
+    assert hashlib.md5((DATA / "heldout.jsonl").read_bytes()).hexdigest() == "10037bbcac4508d8243987a91dea4ef5"

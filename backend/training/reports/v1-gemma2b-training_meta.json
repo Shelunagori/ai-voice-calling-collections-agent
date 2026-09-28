@@ -1,0 +1,17 @@
+{
+  "base": "google/gemma-2b-it",
+  "r": 8,
+  "alpha": 16,
+  "epochs": 2.0,
+  "lr": 0.0002,
+  "max_len": 640,
+  "n_train": 737,
+  "target_modules": [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj"
+  ],
+  "train_seconds": 4630,
+  "seed": 20260928
+}
