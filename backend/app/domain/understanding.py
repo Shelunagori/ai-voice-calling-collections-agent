@@ -118,7 +118,7 @@ class Understanding:
                 llm_validation_failed=invalid,
             )
         latency = (self._mono() - started) * 1000
-        merged, notes = merge(llm_interp, rules, ctx)
+        merged, notes = merge(llm_interp, rules, ctx, text)
         failed = "llm_validation_failed" in vnotes
         return _result(merged, [*vnotes, *notes], llm_used=True, llm_latency_ms=latency, llm_validation_failed=failed)
 
@@ -177,18 +177,39 @@ def _validate(raw: Any, notes: list[str] | None = None) -> Interpretation:
     return Interpretation(actions=valid, source="llm")
 
 
-def _ground_dob(llm_action: ProposedAction, rules: Interpretation, notes: list[str]) -> ProposedAction | None:
-    """Keep only DOB parts the transcript supports (the rules parser is the evidence)."""
+def _ground_dob(
+    llm_action: ProposedAction, rules: Interpretation, notes: list[str], evidence: set[int] | None = None
+) -> ProposedAction | None:
+    """Keep only DOB parts the transcript supports.
+
+    Evidence is the set of numbers the caller actually said (`nlu_rules.number_evidence`), so a
+    model part that appears in the transcript is kept even when the deterministic parser read the
+    span differently ("April 12 19 88": parser day=19, model year=1988 -> both are in the text; the
+    model reading wins). A part the transcript does not contain is replaced by the parser's value
+    or dropped; nothing is ever invented. Without evidence (offline callers) the parser is the
+    only evidence, as before."""
     r_act = rules.first(Action.PROVIDE_DOB) or rules.first(Action.PARTIAL_DOB)
     r = nlu_rules.dob_parts_of(r_act) if r_act else DobParts()
     llm = nlu_rules.dob_parts_of(llm_action)
+    ev = evidence or set()
+    # "March 19 71": the model read the split year 1971 (evidenced only as "19"+"71"); the parser
+    # read the same "19" as a day. One token cannot be both, so the parser's day is discarded.
+    if llm.year is not None and llm.year // 100 in ev and llm.year % 100 in ev:  # both halves said separately
+        if r.day == llm.year // 100 and llm.day is None:
+            notes.append("rules_day_is_split_year_token")
+            r = DobParts(r.year, r.month, None)
     out: dict[str, int | None] = {}
     for k in ("year", "month", "day"):
         lv, rv = getattr(llm, k), getattr(r, k)
+        supported = lv is not None and (lv in ev or (k == "year" and lv % 100 in ev and lv // 100 in ev))
         if lv is not None and rv is not None and lv != rv:
-            notes.append("dob_grounded_to_transcript")
-            out[k] = rv
-        elif lv is not None and rv is None and r.has_any:
+            if supported:
+                notes.append("dob_kept_llm_over_rules")
+                out[k] = lv
+            else:
+                notes.append("dob_grounded_to_transcript")
+                out[k] = rv
+        elif lv is not None and rv is None and not supported and (r.has_any or ev):
             notes.append("llm_dob_field_not_in_transcript")
             out[k] = None
         elif lv is None and rv is not None:
@@ -196,7 +217,7 @@ def _ground_dob(llm_action: ProposedAction, rules: Interpretation, notes: list[s
         else:
             out[k] = lv
     grounded = DobParts(out["year"], out["month"], out["day"])
-    if not r.has_any and grounded.month == 1 and grounded.day == 1:
+    if not r.has_any and not ev and grounded.month == 1 and grounded.day == 1:
         # Unverifiable "YYYY-01-01" is the classic padding of a year-only answer.
         notes.append("llm_dob_field_not_in_transcript")
         grounded = DobParts(grounded.year, None, None)
@@ -204,9 +225,13 @@ def _ground_dob(llm_action: ProposedAction, rules: Interpretation, notes: list[s
 
 
 def merge(
-    llm: Interpretation, rules: Interpretation, ctx: TurnContext | None = None
+    llm: Interpretation, rules: Interpretation, ctx: TurnContext | None = None, text: str = ""
 ) -> tuple[Interpretation, list[str]]:
+    """Combine the model reading with the deterministic parser. `text` is the caller transcript;
+    with it, numbers are grounded against what was actually said (`number_evidence`) rather than
+    against the parser's reading. With an empty text the parser remains the only evidence."""
     notes: list[str] = []
+    evidence = nlu_rules.number_evidence(text) if text else set()
     actions = list(llm.actions) or [ProposedAction(action=Action.UNCLEAR)]
     # caller-rights safety net
     for act in (Action.STOP_CONTACT, Action.REQUEST_HUMAN):
@@ -217,18 +242,22 @@ def merge(
     if rules.has(Action.DENY) and any(a.action == Action.AFFIRM for a in actions):
         actions = [ProposedAction(action=Action.DENY) if a.action == Action.AFFIRM else a for a in actions]
         notes.append("affirm_overridden_by_rules_deny")
-    # grounding: prefer amounts read verbatim from the transcript
+    # grounding: an amount must be in the transcript; the parser's reading wins only when the
+    # model's amount was never said ("60 thousand" -> model 60000 is evidenced, parser 1000 is not)
     rp = rules.first(Action.PROPOSE_PAYMENT)
     for i, a in enumerate(actions):
         if a.action == Action.PROPOSE_PAYMENT and rp and rp.amount is not None and a.amount != rp.amount:
-            actions[i] = a.model_copy(update={"amount": rp.amount})
-            notes.append("amount_grounded_to_transcript")
+            if a.amount is not None and a.amount in evidence:
+                notes.append("amount_kept_llm_over_rules")
+            else:
+                actions[i] = a.model_copy(update={"amount": rp.amount})
+                notes.append("amount_grounded_to_transcript")
     # grounding: a date of birth never gains parts the caller did not say
     dob_kinds = (Action.PROVIDE_DOB, Action.PARTIAL_DOB)
     grounded: list[ProposedAction] = []
     for a in actions:
         if a.action in dob_kinds:
-            g = _ground_dob(a, rules, notes)
+            g = _ground_dob(a, rules, notes, evidence or None)
             if g is not None:
                 grounded.append(g)
         else:

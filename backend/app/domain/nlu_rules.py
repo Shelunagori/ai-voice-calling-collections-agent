@@ -294,6 +294,71 @@ def _ja_number(s: str) -> int | None:
 
 
 # ----------------------------------------------------------------------------------
+# transcript evidence: every number the caller plausibly said, in any surface form
+# ----------------------------------------------------------------------------------
+
+_ORD_SUFFIX = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b")
+_SPLIT_DIGITS = re.compile(r"(?=\b(\d{2})\s+(\d{2})\b)")  # overlapping pairs: "12 19 88" -> 1219 and 1988
+_DIGIT_RUN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_SCALED = re.compile(r"(\d[\d,]*)\s*(k|thousand|man|万|千)", re.I)
+_KANJI_RUN = re.compile(r"[0-9〇零一二三四五六七八九十百千万億]+")
+_WAREKI = re.compile(r"(昭和|平成|令和)\s*([0-9〇零一二三四五六七八九十百千]+|元)\s*年?")
+_ERA_BASE = {"昭和": 1925, "平成": 1988, "令和": 2018}
+
+
+def number_evidence(text: str) -> set[int]:
+    """All integers the transcript supports: digit runs ("1988", "30,000"), split digit pairs
+    ("19 88" -> 1988), scaled forms ("30k", "60 thousand", "3万"), spelled-out English numbers
+    ("nineteen ninety-five", "twenty-five thousand"), ordinals ("12th", "twelfth"), month names,
+    kanji numerals and wareki years. Used to *ground* model output: a number the model reports
+    that is not in this set was never said and is dropped; a number that is in it is kept even
+    when the deterministic parser read the same span differently."""
+    t = normalise(text)
+    out: set[int] = set()
+    for m in _DIGIT_RUN.finditer(t):
+        raw = m.group(0).replace(",", "")
+        if raw.replace(".", "", 1).isdigit():
+            out.add(int(float(raw)))
+    for m in _SPLIT_DIGITS.finditer(t):
+        out.add(int(m[1] + m[2]))
+    for m in _SCALED.finditer(t):
+        base = int(m[1].replace(",", ""))
+        unit = m[2].lower()
+        out.add(base * (1000 if unit in ("k", "thousand", "千") else 10_000))
+    for m in _ORD_SUFFIX.finditer(t):
+        out.add(int(m[1]))
+    for m in _EN_NUMWORD.finditer(t):
+        v = _words_to_int(m[1])
+        if v is not None:
+            out.add(v)
+            # "nineteen ninety-five": two 2-digit groups spoken as a year
+            parts = [_words_to_int(p) for p in re.split(r"\s+", m[1].strip())]
+            if len(parts) == 2 and all(p is not None and 10 <= p <= 99 for p in parts):
+                out.add(parts[0] * 100 + parts[1])  # type: ignore[operator]
+            words = m[1].split()
+            if len(words) >= 2:
+                hi = _words_to_int(words[0])
+                lo = _words_to_int(" ".join(words[1:]))
+                if hi is not None and lo is not None and 10 <= hi <= 99 and 0 <= lo <= 99:
+                    out.add(hi * 100 + lo)
+    for word, n in _ORDINAL_WORDS.items():
+        if re.search(r"\b" + re.escape(word) + r"\b", t):
+            out.add(n)
+    for name, idx in _MONTHS.items():
+        if re.search(r"\b" + name + r"\b", t):
+            out.add(idx)
+    for m in _KANJI_RUN.finditer(t):
+        v = _ja_number(m.group(0))
+        if v is not None:
+            out.add(v)
+    for m in _WAREKI.finditer(t):
+        era_n: int | None = 1 if m[2] == "元" else _ja_int(m[2])
+        if era_n is not None:
+            out.add(_ERA_BASE[m[1]] + era_n)
+    return out
+
+
+# ----------------------------------------------------------------------------------
 # dates
 # ----------------------------------------------------------------------------------
 

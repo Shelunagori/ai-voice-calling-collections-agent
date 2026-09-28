@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     cloudflare_account_id: str = ""
     cloudflare_api_token: str = ""
     cloudflare_ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    # Optional BYO LoRA (post-trained NLU): when set, the LoRA base model + adapter replaces
+    # `cloudflare_ai_model` for interpretation. Rules parser fallback/merge is unchanged.
+    cloudflare_ai_lora: str = ""
+    cloudflare_ai_lora_model: str = "@cf/google/gemma-2b-it-lora"
     cloudflare_judge_model: str = ""
     llm_timeout_s: float = 2.5
     llm_max_retries: int = 1

@@ -20,8 +20,20 @@ def build_providers(s: Settings) -> Providers:
     if s.effective_llm_provider() == "cloudflare":
         from .cloudflare_llm import CloudflareLLM
 
-        llm = CloudflareLLM(s.cloudflare_account_id, s.cloudflare_api_token, s.cloudflare_ai_model, s.llm_max_retries)
-        labels["llm"] = f"cloudflare:{s.cloudflare_ai_model}"
+        if s.cloudflare_ai_lora:
+            llm = CloudflareLLM(
+                s.cloudflare_account_id,
+                s.cloudflare_api_token,
+                s.cloudflare_ai_lora_model,
+                s.llm_max_retries,
+                lora=s.cloudflare_ai_lora,
+            )
+            labels["llm"] = f"cloudflare:{s.cloudflare_ai_lora_model}+lora:{s.cloudflare_ai_lora}"
+        else:
+            llm = CloudflareLLM(
+                s.cloudflare_account_id, s.cloudflare_api_token, s.cloudflare_ai_model, s.llm_max_retries
+            )
+            labels["llm"] = f"cloudflare:{s.cloudflare_ai_model}"
     else:
         # In mock mode the rules parser is the language layer; no LLM object is used.
         llm = None

@@ -41,11 +41,18 @@ class CloudflareLLM:
     name = "cloudflare"
 
     def __init__(
-        self, account_id: str, api_token: str, model: str, max_retries: int = 1, client: httpx.AsyncClient | None = None
+        self,
+        account_id: str,
+        api_token: str,
+        model: str,
+        max_retries: int = 1,
+        client: httpx.AsyncClient | None = None,
+        lora: str | None = None,
     ) -> None:
         if not account_id or not api_token:
             raise ValueError("Cloudflare credentials missing")
         self.model = model
+        self.lora = lora  # BYO LoRA finetune id/name: raw-prompt mode, no server-side chat template
         self._url = API.format(account=account_id, model=model)
         self._headers = {"Authorization": f"Bearer {api_token}"}
         self.max_retries = max_retries
@@ -55,12 +62,27 @@ class CloudflareLLM:
         await self._client.aclose()
 
     async def complete_json(self, system: str, user: str, schema: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-        body = {
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "response_format": {"type": "json_schema", "json_schema": schema},
-            "max_tokens": 256,
-            "temperature": 0,
-        }
+        body: dict[str, Any]
+        if self.lora:
+            # The fine-tuned adapter was trained on exactly this string (app.training.format), so
+            # the request bypasses the server-side chat template and JSON mode; the completion is
+            # parsed and schema-validated by the caller like any other model output.
+            from ..training.format import build_prompt
+
+            body = {
+                "prompt": build_prompt(system, user),
+                "raw": True,
+                "lora": self.lora,
+                "max_tokens": 160,
+                "temperature": 0,
+            }
+        else:
+            body = {
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "response_format": {"type": "json_schema", "json_schema": schema},
+                "max_tokens": 256,
+                "temperature": 0,
+            }
         attempt = 0
         while True:
             started = time.monotonic()
@@ -91,7 +113,7 @@ class CloudflareLLM:
                     await asyncio.sleep(0.2 * attempt)
                     continue
                 raise ProviderError(self.name, kind, f"HTTP {resp.status_code}", retryable=retryable)
-            return _extract_json(resp.json())
+            return _extract_json(resp.json(), lenient=bool(self.lora))
 
     async def stream_text(self, system: str, user: str, *, timeout: float) -> AsyncIterator[str]:
         body = {
@@ -127,7 +149,9 @@ class CloudflareLLM:
             raise ProviderError(self.name, ErrorKind.UNAVAILABLE, type(e).__name__) from e
 
 
-def _extract_json(payload: Any) -> dict[str, Any]:
+def _extract_json(payload: Any, lenient: bool = False) -> dict[str, Any]:
+    """`lenient` (raw-prompt LoRA completions): take the first JSON object in the text and ignore
+    trailing end-of-turn markers or prose."""
     if not isinstance(payload, dict) or not payload.get("success", True):
         raise ProviderError("cloudflare", ErrorKind.BAD_RESPONSE, "unsuccessful response")
     result = payload.get("result", payload)
@@ -136,8 +160,12 @@ def _extract_json(payload: Any) -> dict[str, Any]:
         return resp
     if isinstance(resp, str):
         try:
+            if lenient:
+                from ..training.format import parse_model_json
+
+                return parse_model_json(resp)
             obj = json.loads(resp)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, ValueError) as e:
             raise ProviderError("cloudflare", ErrorKind.BAD_RESPONSE, "response is not JSON") from e
         if isinstance(obj, dict):
             return obj

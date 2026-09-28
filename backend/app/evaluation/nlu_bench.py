@@ -80,6 +80,8 @@ def score(gold: list[dict[str, Any]], pred: list[dict[str, Any]] | None) -> dict
             "slot_match": None if not _has_slots(gold) else False,
             "rights_recall": rights,
         }
+    if not pred:  # parsed, but no action at all: the runtime would treat this as a failed turn
+        return {**score(gold, None), "valid": False}
     pred_names = {a["action"] for a in pred}
     action_match = pred_names == gold_names
     exact = _canon(gold) == _canon(pred)
@@ -264,9 +266,10 @@ def build_llm(provider: str, model: str | None, lora: str | None) -> LLMProvider
             raise SystemExit("cloudflare credentials not configured (CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN)")
         from ..providers.cloudflare_llm import CloudflareLLM
 
-        kw: dict[str, Any] = {"lora": lora} if lora else {}
+        lora = lora or None
+        default_model = s.cloudflare_ai_lora_model if lora else s.cloudflare_ai_model
         return CloudflareLLM(
-            s.cloudflare_account_id, s.cloudflare_api_token, model or s.cloudflare_ai_model, s.llm_max_retries, **kw
+            s.cloudflare_account_id, s.cloudflare_api_token, model or default_model, s.llm_max_retries, lora=lora
         )
     if provider == "mock":
         from ..providers.mock import MockLLM
