@@ -32,8 +32,8 @@ agent ships. Reports: `backend/training/reports/`.
 | Gemma-2B + LoRA **v1** (737 rows) | raw, local T4 | 82.9% | 84.6% | 79.5% | 94.1% ✗ | — |
 | Gemma-2B + LoRA **v2** (1,136 rows) | raw, local T4 | **90.6%** | 93.2% | 86.4% | 94.1% ✗ | 1.3 s (batched) |
 | Gemma-2B + LoRA v2, Cloudflare BYO-LoRA | raw | 85.5% | 88.9% | 77.3% | 94.1% ✗ | **4.1 s** |
-| Llama-70B + evidence merge (D18) | runtime | 89.7% | 90.6% | 95.5% | 100% | 1,024 ms |
-| Gemma-2B + LoRA v2 + evidence merge | runtime | *pending* | | | | |
+| Llama-70B + evidence merge (D18) | runtime | **92.3%** | 93.2% | 95.5% | 100% | 940 ms |
+| Gemma-2B + LoRA v2 + evidence merge, Cloudflare | runtime | **92.3%** | 94.9% | 93.2% | **100%** | 4,066 ms |
 
 Per-category tables are in `training/reports/before.md` and `after.md`.
 
@@ -48,8 +48,8 @@ Per-category tables are in `training/reports/before.md` and `after.md`.
   injection 0 → 100%, partial DOB 75 → 100%, JA 79.5 → 86.4%.
 - **The caller-rights gate fails on the raw model** (one JA 「責任者を出してください」 read as UNCLEAR).
   In production the deterministic parser adds STOP_CONTACT / REQUEST_HUMAN independently of the
-  model (`understanding.merge`), so the runtime path is expected to pass; the deployed runtime
-  measurement is pending (see below).
+  model (`understanding.merge`): on the deployed runtime path recall is **100%** and exact match rises
+  to 92.3% — the safety net and the model cover each other's misses.
 - **Serving path finding:** on Cloudflare's BYO-LoRA beta the same adapter scores 85.5% and answers
   in **4.1 s p50** — three times slower than the 70B model it was meant to replace, and outside the
   1.5 s turn budget. 4 of 117 completions were not JSON (the provider falls back to the parser). The
@@ -60,7 +60,8 @@ Per-category tables are in `training/reports/before.md` and `after.md`.
   discarded correct model readings of split years ("April 12 19 88") and spelled amounts ("60
   thousand"): 70B raw 100% on split years, runtime 12.5%. Grounding now checks the transcript
   itself (`nlu_rules.number_evidence`): a number the model reports is kept if the caller said it in
-  any form, replaced or dropped otherwise, never invented. 70B runtime 86.3% → 89.7%.
+  any form, replaced or dropped otherwise, never invented. 70B runtime 86.3% → **92.3%** (split years
+  12.5% → 100%) with no change to the model.
 
 ## Remaining held-out failures (v2, local)
 
@@ -71,8 +72,9 @@ DENY. All are data-coverage gaps (v3 candidates), not schema or format errors.
 
 ## Pending
 
-- Deployed runtime benches (LoRA + merge, 70B + second merge fix) — blocked on 2026-09-28 by the
-  Cloudflare free-tier daily quota (HTTP 429 after ~600 requests); to be re-run and filled in above.
+- A same-day re-run of the Cloudflare LoRA raw bench hit the free-tier daily quota (HTTP 429); the
+  85.5% figure is from the earlier valid run. Note for free-tier users: ~250 LoRA + 70B requests exhaust
+  10,000 neurons/day.
 - Self-hosted serving of the adapter to test the latency claim.
 - Native-speaker review of the Japanese rows; a v3 pass on the failures above.
 

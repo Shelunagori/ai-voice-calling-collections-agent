@@ -112,13 +112,16 @@ scores actions and slots exactly and treats a dropped caller-rights intent as a 
 | Gemma-2B-it zero-shot | 0.0% | — |
 | **Gemma-2B-it + LoRA v2** (local T4) | **90.6%** | 1.3 s batched |
 | Gemma-2B-it + LoRA v2 on Cloudflare BYO-LoRA | 85.5% | 4.1 s |
+| Production path (model + rules merge, transcript-evidence grounding): 70B | **92.3%** | 0.94 s |
+| Production path: Gemma-2B + LoRA v2 | **92.3%** | 4.1 s |
 
 - v1 (737 rows) scored 82.9%; v2 added 399 rows targeted at v1's held-out failures without touching the
   held-out file (multi-intent 0 → 67%, injection 0 → 100%, JA 79.5 → 86.4%).
 - The merge layer that combines the model with the rules parser was found to discard correct model
-  readings (split years, spelled amounts); it now grounds numbers against the transcript itself.
-- Honest limits: the raw model still misses one Japanese human-transfer phrasing (the rules parser covers
-  it on the runtime path); Cloudflare's BYO-LoRA beta serves the adapter at 4.1 s p50, so the latency
+  readings (split years, spelled amounts); it now grounds numbers against the transcript itself, which
+  alone took the 70B production path from 86.3% to 92.3%.
+- Honest limits: the raw model still misses one Japanese human-transfer phrasing (the rules safety net
+  catches it: caller-rights recall is 100% on the production path); Cloudflare's BYO-LoRA beta serves the adapter at 4.1 s p50, so the latency
   budget is not met on that path and self-hosted serving is the next step; Japanese training rows are not
   native-reviewed. Full write-up: [docs/POST_TRAINING_RESULTS.md](docs/POST_TRAINING_RESULTS.md).
 
