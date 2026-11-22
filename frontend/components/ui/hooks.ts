@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useSyncExternalStore } from "react";
-import { THEME_KEY, type Theme } from "./theme-boot";
+import { saveTheme, type Theme } from "./theme-boot";
 
 const readTheme = (): Theme => (document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
 
@@ -18,9 +18,9 @@ export function useTheme(): [Theme, () => void] {
     const next: Theme = readTheme() === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
     try {
-      localStorage.setItem(THEME_KEY, next);
+      saveTheme(next);
     } catch {
-      /* storage unavailable: the theme still switches for this visit */
+      /* cookies unavailable: the theme still switches for this visit */
     }
   }, []);
   return [theme, toggle];

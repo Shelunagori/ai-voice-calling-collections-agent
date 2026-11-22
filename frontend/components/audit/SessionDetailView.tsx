@@ -1,6 +1,13 @@
 "use client";
 
-import type { ReactNode } from "react";
+// Reviewer-facing audit view for one session (browser and phone share this layout). Readable labels up front, raw
+// audited values kept in the key/value panels and the JSON export. DOB values are masked on screen.
+import { useMemo, useState, type ReactNode } from "react";
+import { familyOf, fmtDuration, identityLabel, languageLabel, promiseLabel, reasonLabel, endLabel, type Family } from "@/components/sessions/labels";
+import s from "@/components/sessions/sessions.module.css";
+import { Chip, type ChipTone } from "@/components/ui/Chip";
+import { cx } from "@/components/ui/cx";
+import ui from "@/components/ui/ui.module.css";
 import {
   collectionState,
   conversation,
@@ -12,36 +19,80 @@ import {
   MIN_SAMPLES_FOR_P95,
   policyDecisions,
   voiceRuntime,
+  type Tone,
 } from "@/lib/audit-summary";
-import { ms, shortTime, yen } from "@/lib/format";
+import { humanize, ms, shortTime, yen } from "@/lib/format";
 import type { SessionDetail } from "@/lib/session-detail";
 
 const str = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 const money = (v: unknown) => (typeof v === "number" ? yen(v) : "—");
+const chipTone = (t: Tone): ChipTone => (t === "muted" ? "plain" : t);
 
-function Panel({ title, children, note }: { title: string; children: ReactNode; note?: string }) {
+function Panel({ title, children, note, wide, className }: { title: string; children: ReactNode; note?: string; wide?: boolean; className?: string }) {
   return (
-    <section className="panel" aria-label={title}>
-      <div className="panel-head">
+    <section className={cx(s.panel, wide && s.panelWide, className)} aria-label={title}>
+      <div className={s.panelHead}>
         <h3>{title}</h3>
-        {note && <span className="muted small">{note}</span>}
+        {note && <span>{note}</span>}
       </div>
       {children}
     </section>
   );
 }
 
-export function SessionDetailView({ id, d, operator }: { id: string; d: SessionDetail; operator: boolean }) {
-  const s = d.session;
-  const phone = s.channel === "phone";
-  const end = endState(s);
+const FAMILY_LABEL: Record<Family, string> = { policy: "Policy", identity: "Identity", payment: "Payment", voice: "Voice", session: "Session", other: "Other" };
+
+function eventTitle(type: string) {
+  const [head, ...rest] = type.split(".");
+  return rest.length ? `${humanize(head)} · ${rest.join(" ").replace(/_/g, " ")}` : humanize(type);
+}
+
+function DataChips({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (!entries.length) return null;
+  return (
+    <span className={s.kvChips}>
+      {entries.slice(0, 8).map(([k, v]) => {
+        const text = typeof v === "object" ? JSON.stringify(v) : String(v);
+        return (
+          <span key={k} title={text}>
+            <em>{k}</em> {text.length > 60 ? `${text.slice(0, 57)}…` : text}
+          </span>
+        );
+      })}
+      {entries.length > 8 && <span>+{entries.length - 8} more</span>}
+    </span>
+  );
+}
+
+export function SessionDetailView({ id, d, operator, onRefresh }: { id: string; d: SessionDetail; operator: boolean; onRefresh?: () => void }) {
+  const sess = d.session;
+  const phone = sess.channel === "phone";
+  const end = endState(sess);
   const convo = conversation(d.turns);
   const identity = identityTimeline(d.audit);
   const policy = policyDecisions(d.audit);
   const voice = voiceRuntime(d.audit);
   const lat = latencySummary(d.latency);
   const coll = collectionState(d);
-  const providers = (s.providers ?? {}) as Record<string, string>;
+  const providers = (sess.providers ?? {}) as Record<string, string>;
+  const [family, setFamily] = useState<Family | "all">("all");
+
+  const [endText, endTone] = endLabel(end.category);
+  const [idText, idTone] = identityLabel(sess.identity_status);
+  const [prText, prTone] = promiseLabel(sess.promise_status);
+  const blocks = policy.filter((p) => p.decision === "BLOCK").length;
+  const fastest = voice.bargeIns.reduce<number | null>((m, b) => (b.cancelMs === null ? m : m === null ? b.cancelMs : Math.min(m, b.cancelMs)), null);
+  const maxP50 = Math.max(1, ...lat.map((l) => l.p50 ?? 0));
+  const families = useMemo(() => {
+    const c: Partial<Record<Family, number>> = {};
+    d.audit.forEach((e) => {
+      const f = familyOf(e.type);
+      c[f] = (c[f] ?? 0) + 1;
+    });
+    return c;
+  }, [d.audit]);
+  const trail = family === "all" ? d.audit : d.audit.filter((e) => familyOf(e.type) === family);
 
   function download() {
     const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
@@ -52,133 +103,175 @@ export function SessionDetailView({ id, d, operator }: { id: string; d: SessionD
   }
 
   return (
-    <div className="stack" data-testid="session-detail">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="row small">
-          <span className={`pill ${phone ? "warn" : "info"}`} data-testid="channel-pill">
-            {phone ? "phone (PSTN)" : String(s.channel ?? "browser")}
-          </span>
-          <span className="pill muted">{str(s.language)}</span>
-          <span className="pill info">{str(s.identity_status)}</span>
-          <span className="pill info">{str(s.promise_status)}</span>
-          <span className={`pill ${end.category === "error_or_disconnect" ? "bad" : "muted"}`}>{end.category}</span>
-          {operator && <span className="pill ok">operator view</span>}
+    <div className={s.detail} data-testid="session-detail">
+      <div className={s.detailBar}>
+        <div className={s.chipRow}>
+          <Chip tone={phone ? "warn" : "info"} data-testid="channel-pill">
+            {phone ? "phone (PSTN)" : String(sess.channel ?? "browser")}
+          </Chip>
+          <Chip>{languageLabel(sess.language)}</Chip>
+          <Chip tone={idTone} dot title={str(sess.identity_status)}>
+            {idText}
+          </Chip>
+          <Chip tone={prTone} title={str(sess.promise_status)}>
+            {prText}
+          </Chip>
+          {operator && (
+            <Chip tone="ok" dot>
+              operator view
+            </Chip>
+          )}
         </div>
-        <button className="btn sm" onClick={download}>
-          Download JSON
-        </button>
+        <div className={s.chipRow}>
+          {onRefresh && (
+            <button type="button" className={ui.ghostBtn} onClick={onRefresh}>
+              Refresh
+            </button>
+          )}
+          <button type="button" className={ui.ghostBtn} onClick={download}>
+            Download JSON
+          </button>
+        </div>
       </div>
 
-      <div className="grid cols-2">
+      <div className={s.tiles}>
+        <div className={s.tile} data-tone={endTone}>
+          <span>Outcome</span>
+          <b>{endText}</b>
+        </div>
+        <div className={s.tile}>
+          <span>Duration</span>
+          <b>{fmtDuration(sess.started_at, sess.ended_at)}</b>
+        </div>
+        <div className={s.tile}>
+          <span>Utterances</span>
+          <b>{convo.length}</b>
+        </div>
+        <div className={s.tile} data-tone={blocks ? "warn" : undefined}>
+          <span>Policy allow / block</span>
+          <b>
+            {policy.length - blocks} / {blocks}
+          </b>
+        </div>
+        <div className={s.tile}>
+          <span>Barge-ins</span>
+          <b>
+            {voice.bargeIns.length}
+            {fastest !== null && <small> · {fastest} ms</small>}
+          </b>
+        </div>
+        <div className={s.tile} data-tone={d.promise ? "ok" : undefined}>
+          <span>Promise</span>
+          <b>{d.promise ? money(d.promise.amount) : "—"}</b>
+        </div>
+      </div>
+
+      <div className={s.grid}>
         <Panel title="Session">
-          <dl className="kv">
+          <dl className={s.kv}>
             <dt>Session id</dt>
             <dd>{id}</dd>
             <dt>Channel</dt>
-            <dd>{str(s.channel)}</dd>
+            <dd>{str(sess.channel)}</dd>
             <dt>Scenario · language</dt>
             <dd>
-              {str(s.scenario_key)} · {str(s.language)} · input {str(s.input_mode)}
+              {str(sess.scenario_key)} · {str(sess.language)} · input {str(sess.input_mode)}
             </dd>
             {phone && (
               <>
                 <dt>Twilio call id</dt>
-                <dd>{str(s.call_id)}</dd>
+                <dd>{str(sess.call_id)}</dd>
               </>
             )}
             <dt>Providers</dt>
             <dd>{Object.entries(providers).map(([k, v]) => `${k}=${v}`).join(" · ") || "—"}</dd>
             <dt>Started</dt>
-            <dd>{str(s.started_at)}</dd>
+            <dd>{str(sess.started_at)}</dd>
             <dt>Ended</dt>
-            <dd>{str(s.ended_at)}</dd>
+            <dd>{str(sess.ended_at)}</dd>
             <dt>Call status</dt>
-            <dd>{str(s.call_status)}</dd>
+            <dd>{str(sess.call_status)}</dd>
             <dt>End reason</dt>
-            <dd>{str(s.ended_reason)}</dd>
+            <dd>{str(sess.ended_reason)}</dd>
           </dl>
         </Panel>
 
         <Panel title="Identity" note="DOB values are masked here; parts given are shown">
           {identity.length === 0 ? (
-            <p className="muted small">No identity events.</p>
+            <p className={s.muted}>No identity events.</p>
           ) : (
-            <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>
+            <ol className={s.steps}>
               {identity.map((i) => (
-                <li key={i.id} style={{ marginBottom: 4 }}>
-                  <span className={`pill ${i.tone}`}>{i.label}</span> <span className="muted mono">turn {str(i.turn)}</span> {i.detail}
+                <li key={i.id} data-tone={i.tone}>
+                  <Chip tone={chipTone(i.tone)}>{i.label}</Chip>
+                  <span className={s.stepMeta}>turn {str(i.turn)}</span>
+                  {i.detail && <span className={s.stepDetail}>{i.detail}</span>}
                 </li>
               ))}
             </ol>
           )}
         </Panel>
-      </div>
 
-      <Panel title={`Conversation (${convo.length} utterances)`}>
-        <div className="stack">
-          {convo.map((t) => (
-            <div key={t.key} className="small" style={{ borderLeft: `3px solid var(${t.speaker === "caller" ? "--accent" : "--border"})`, paddingLeft: 8 }}>
-              <div className="row">
-                <b>{t.speaker}</b>
-                <span className="mono muted">turn {str(t.turn)}</span>
-                {t.acts && <span className="mono muted">{t.acts}</span>}
-                {t.interrupted && <span className="pill warn">interrupted</span>}
-                {t.actions.map((a) => (
-                  <span key={a} className="pill info mono">
-                    {a}
-                  </span>
-                ))}
-                {t.source && <span className="muted mono">via {t.source}</span>}
-              </div>
-              <div>{t.text ?? <span className="muted">(text purged by retention policy)</span>}</div>
-              {t.interrupted && t.spoken && (
-                <div className="muted">
-                  heard before barge-in: <q>{t.spoken}</q>
+        <Panel title={`Conversation (${convo.length} utterances)`} wide>
+          <div className={s.convo}>
+            {convo.map((t) => (
+              <div key={t.key} className={s.utt} data-who={t.speaker}>
+                <div className={s.uttMeta}>
+                  <i />
+                  {t.speaker}
+                  <span>turn {str(t.turn)}</span>
+                  {t.acts && <span>{t.acts}</span>}
+                  {t.source && <span>via {t.source}</span>}
                 </div>
-              )}
-              {t.notes.length > 0 && <div className="muted mono">{t.notes.join(" · ")}</div>}
-            </div>
-          ))}
-        </div>
-      </Panel>
+                <div className={cx(s.uttBubble, t.interrupted && s.uttCut)}>{t.text ?? <span className={s.muted}>(text purged by retention policy)</span>}</div>
+                {t.interrupted && (
+                  <div className={s.uttNote}>
+                    <Chip tone="bad">interrupted</Chip>
+                    {t.spoken && (
+                      <span>
+                        heard before barge-in: <q>{t.spoken}</q>
+                      </span>
+                    )}
+                  </div>
+                )}
+                {t.actions.length > 0 && (
+                  <div className={s.uttActions}>
+                    {t.actions.map((a) => (
+                      <span key={a}>{a}</span>
+                    ))}
+                  </div>
+                )}
+                {t.notes.length > 0 && <div className={s.uttNotes}>{t.notes.join(" · ")}</div>}
+              </div>
+            ))}
+          </div>
+        </Panel>
 
-      <div className="grid cols-2">
         <Panel title="Voice runtime">
-          <h4 className="small muted">Barge-ins ({voice.bargeIns.length})</h4>
+          <h4 className={s.sub}>Barge-ins ({voice.bargeIns.length})</h4>
           {voice.bargeIns.length === 0 ? (
-            <p className="muted small">None.</p>
+            <p className={s.muted}>None.</p>
           ) : (
-            <table className="small">
-              <thead>
-                <tr>
-                  <th>Turn</th>
-                  <th>Trigger</th>
-                  <th>Internal TTS cancel</th>
-                  <th>Played</th>
-                  <th>Interrupted text</th>
-                </tr>
-              </thead>
-              <tbody>
-                {voice.bargeIns.map((b) => (
-                  <tr key={b.id}>
-                    <td>{str(b.turn)}</td>
-                    <td className="mono">{b.source}</td>
-                    <td className="mono">{b.cancelMs === null ? "—" : `${b.cancelMs} ms`}</td>
-                    <td className="mono">{b.playedS === null ? "—" : `${b.playedS} s`}</td>
-                    <td>{b.interrupted}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <ul className={s.barges}>
+              {voice.bargeIns.map((b) => (
+                <li key={b.id}>
+                  <b>{b.cancelMs === null ? "—" : `${b.cancelMs} ms`}</b>
+                  <span>
+                    turn {str(b.turn)} · {b.source} · played {b.playedS === null ? "—" : `${b.playedS} s`}
+                    {b.interrupted && <em>{b.interrupted}</em>}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
-          <h4 className="small muted">Lifecycle ({voice.transitions.length} transitions)</h4>
+          <h4 className={s.sub}>Lifecycle ({voice.transitions.length} transitions)</h4>
           {voice.transitions.length === 0 ? (
-            <p className="muted small">Not recorded for this session (sessions before this build).</p>
+            <p className={s.muted}>Not recorded for this session (sessions before this build).</p>
           ) : (
-            <div className="mono small" style={{ maxHeight: 220, overflowY: "auto" }}>
+            <div className={s.transitions}>
               {voice.transitions.map((t, i) => (
                 <div key={i}>
-                  +{t.t_ms} ms {t.from} → {t.to} <span className="muted">({t.cause})</span>
+                  <span>+{t.t_ms} ms</span> {t.from} → {t.to} <em>({t.cause})</em>
                 </div>
               ))}
             </div>
@@ -186,30 +279,23 @@ export function SessionDetailView({ id, d, operator }: { id: string; d: SessionD
         </Panel>
 
         <Panel title="Latency" note={`p95 shown from n ≥ ${MIN_SAMPLES_FOR_P95}`}>
-          <table className="small">
-            <thead>
-              <tr>
-                <th>Stage</th>
-                <th>n</th>
-                <th>p50</th>
-                <th>p95</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lat.map((l) => (
-                <tr key={l.key}>
-                  <td>{l.label}</td>
-                  <td className="mono">{l.count}</td>
-                  <td className="mono">{ms(l.p50)}</td>
-                  <td className="mono">{l.p95 === undefined ? (l.count ? "n too small" : "—") : ms(l.p95)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <details className="small" style={{ marginTop: 8 }}>
+          <ul className={s.lat}>
+            {lat.map((l) => (
+              <li key={l.key}>
+                <span className={s.latLabel}>{l.label}</span>
+                <span className={s.latBar} aria-hidden="true">
+                  <i style={{ width: `${((l.p50 ?? 0) / maxP50) * 100}%` }} />
+                </span>
+                <span className={s.latNums}>
+                  p50 {ms(l.p50)} · p95 {l.p95 === undefined ? (l.count ? "n too small" : "—") : ms(l.p95)} · n {l.count}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <details className={s.more}>
             <summary>Per turn</summary>
             {d.latency.map((l) => (
-              <div key={`${l.turn_index}-${l.input_mode}`} className="mono">
+              <div key={`${l.turn_index}-${l.input_mode}`}>
                 #{l.turn_index} {l.input_mode}:{" "}
                 {Object.entries(l.stages)
                   .map(([k, v]) => `${k}=${ms(v)}`)
@@ -218,11 +304,9 @@ export function SessionDetailView({ id, d, operator }: { id: string; d: SessionD
             ))}
           </details>
         </Panel>
-      </div>
 
-      <div className="grid cols-2">
         <Panel title="Collection state">
-          <dl className="kv">
+          <dl className={s.kv}>
             <dt>Balance</dt>
             <dd>{money(coll.outstanding_balance)}</dd>
             <dt>Minimum payment</dt>
@@ -258,7 +342,11 @@ export function SessionDetailView({ id, d, operator }: { id: string; d: SessionD
         </Panel>
 
         <Panel title="End state">
-          <dl className="kv">
+          <div className={s.endHero} data-tone={endTone}>
+            <b>{endText}</b>
+            <span>{reasonLabel(end.reason)}</span>
+          </div>
+          <dl className={s.kv}>
             <dt>Outcome</dt>
             <dd>{end.category}</dd>
             <dt>Reason</dt>
@@ -267,72 +355,74 @@ export function SessionDetailView({ id, d, operator }: { id: string; d: SessionD
             <dd>{end.callStatus || "—"}</dd>
           </dl>
         </Panel>
-      </div>
 
-      <Panel title={`Policy decisions (${policy.length})`}>
-        <table className="small">
-          <thead>
-            <tr>
-              <th>Turn</th>
-              <th>Decision</th>
-              <th>Rule</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Panel title={`Policy decisions (${policy.length})`} wide note="Simulated demo policy — not legal requirements">
+          <ul className={s.policy}>
             {policy.map((p) => (
-              <tr key={p.id}>
-                <td>{str(p.turn)}</td>
-                <td>
-                  <span className={`pill ${decisionTone(p.decision)}`}>{p.decision}</span>
-                </td>
-                <td className="mono">{p.rule}</td>
-                <td>
-                  {p.reason}
-                  {p.details && <span className="muted mono"> {JSON.stringify(p.details)}</span>}
-                </td>
-              </tr>
+              <li key={p.id} data-decision={p.decision}>
+                <Chip tone={chipTone(decisionTone(p.decision))}>{p.decision === "NOT_APPLICABLE" ? "N/A" : p.decision}</Chip>
+                <span className={s.policyBody}>
+                  <code>{p.rule}</code>
+                  <span>
+                    {p.reason}
+                    {p.details && <em> {JSON.stringify(p.details)}</em>}
+                  </span>
+                </span>
+                <span className={s.stepMeta}>turn {str(p.turn)}</span>
+              </li>
             ))}
-          </tbody>
-        </table>
-      </Panel>
+          </ul>
+        </Panel>
 
-      <div className="panel table-scroll">
-        <h3>Audit trail ({d.audit.length} events)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Turn</th>
-              <th>Event</th>
-              <th>Data</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.audit.map((e) => (
-              <tr key={e.id}>
-                <td className="mono small">{shortTime(e.at)}</td>
-                <td>{e.turn_index ?? ""}</td>
-                <td className="mono small">
-                  {e.type === "policy.decision" ? (
-                    <>
-                      <span className={`pill ${decisionTone(String(e.data.decision))}`}>{String(e.data.decision)}</span> {String(e.data.rule)}
-                    </>
-                  ) : (
-                    e.type
-                  )}
-                </td>
-                <td className="mono small" style={{ maxWidth: 520, overflowWrap: "anywhere" }}>
-                  {e.type === "policy.decision"
-                    ? String(e.data.reason)
-                    : e.type === "voice.lifecycle"
-                      ? `${voice.transitions.length} transitions (see Voice runtime)`
-                      : JSON.stringify(maskDobFields(e.data ?? {}, e.type))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <section className={cx(s.panel, s.panelWide)} aria-label="Audit trail">
+          <div className={s.panelHead}>
+            <h3>Audit trail ({d.audit.length} events)</h3>
+            <div className={s.famFilter} role="group" aria-label="Filter audit events">
+              <button type="button" aria-pressed={family === "all"} onClick={() => setFamily("all")}>
+                All <b>{d.audit.length}</b>
+              </button>
+              {(Object.keys(FAMILY_LABEL) as Family[])
+                .filter((f) => families[f])
+                .map((f) => (
+                  <button key={f} type="button" data-family={f} aria-pressed={family === f} onClick={() => setFamily(f)}>
+                    {FAMILY_LABEL[f]} <b>{families[f]}</b>
+                  </button>
+                ))}
+            </div>
+          </div>
+          <ol className={s.trail}>
+            {trail.map((e) => {
+              const f = familyOf(e.type);
+              const isPolicy = e.type === "policy.decision";
+              return (
+                <li key={e.id} data-family={f}>
+                  <span className={s.trailTime}>{shortTime(e.at)}</span>
+                  <span className={s.trailDot} aria-hidden="true" />
+                  <div className={s.trailBody}>
+                    <div className={s.trailHead}>
+                      {isPolicy ? (
+                        <>
+                          <Chip tone={chipTone(decisionTone(String(e.data.decision)))}>{String(e.data.decision)}</Chip>
+                          <code>{String(e.data.rule)}</code>
+                        </>
+                      ) : (
+                        <b title={e.type}>{eventTitle(e.type)}</b>
+                      )}
+                      {e.turn_index !== null && e.turn_index !== undefined && <span className={s.stepMeta}>turn {e.turn_index}</span>}
+                    </div>
+                    {isPolicy ? (
+                      <span className={s.trailText}>{String(e.data.reason)}</span>
+                    ) : e.type === "voice.lifecycle" ? (
+                      <span className={s.trailText}>{voice.transitions.length} transitions (see Voice runtime)</span>
+                    ) : (
+                      <DataChips data={maskDobFields(e.data ?? {}, e.type)} />
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
       </div>
     </div>
   );

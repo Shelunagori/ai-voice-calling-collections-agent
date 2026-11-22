@@ -2,9 +2,9 @@
  * Design tokens for the whole site. Dark-first: <html data-theme="dark"> is the server default and an inline
  * script in the root layout swaps in a saved "light" choice before first paint (no flash).
  *
- * This file is unlayered on purpose: the old stylesheet (globals.css) sits in `@layer legacy`, so anything here
- * and in CSS modules wins over it without !important. Pages still on legacy classes (.panel, .btn, .pill …) pick
- * up the new look through the "legacy bridge" variables at the bottom until they are migrated.
+ * This file is unlayered on purpose: the base element rules in globals.css sit in `@layer legacy`, so anything
+ * here and in CSS modules wins over them without !important. The "legacy bridge" variables below are the names
+ * those base rules read (links, tables, form fields).
  */
 
 :root {
@@ -34,13 +34,14 @@
   --aurora-op: 0.3;
   --grain-op: 0.07;
   --grad-text: linear-gradient(100deg, var(--a2), var(--a1) 35%, var(--a3) 70%, var(--agent-2));
+  --caller-bubble: linear-gradient(135deg, #2563eb, #06b6d4);
   --header-h: 64px;
   --r-lg: 22px;
   --r-md: 14px;
   --font-sans: var(--font-display), "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-code: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* legacy bridge (variables globals.css reads) */
+  /* legacy bridge: variable names the base rules in globals.css read */
   --panel: rgba(255, 255, 255, 0.045);
   --panel-2: rgba(255, 255, 255, 0.075);
   --border: rgba(255, 255, 255, 0.1);
@@ -83,6 +84,7 @@
   --aurora-op: 0.55;
   --grain-op: 0.035;
   --grad-text: linear-gradient(100deg, #0284c7, #4f46e5 35%, #db2777 70%, #d97706);
+  --caller-bubble: linear-gradient(135deg, #1d4ed8, #0891b2);
 
   --panel: rgba(255, 255, 255, 0.62);
   --panel-2: rgba(15, 23, 42, 0.045);
@@ -115,13 +117,4 @@ body {
 }
 ::selection {
   background: color-mix(in srgb, var(--a2) 35%, transparent);
-}
-
-/* ---- legacy bridge: make not-yet-migrated pages sit nicely on the aurora ---- */
-.panel {
-  backdrop-filter: blur(14px) saturate(1.2);
-}
-:root:not([data-theme="light"]) .btn.primary,
-:root:not([data-theme="light"]) .state-machine .st.on {
-  color: #0b1020;
 }

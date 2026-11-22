@@ -48,7 +48,9 @@ export function Nav() {
             AI Voice Collections Agent
             {/* Compact honesty line, shown when the header pills don't fit (tablet / mobile). */}
             <small className={ui.brandSub}>
-              <span>Synthetic data only</span> · portfolio POC
+              <span className={ui.brandSubWarn}>Synthetic data only</span>
+              <span className={ui.brandSubSep}> · </span>
+              <span>inspired by production work</span>
             </small>
           </span>
         </Link>
@@ -59,7 +61,7 @@ export function Nav() {
           <Chip tone="warn" dot>
             Synthetic data only
           </Chip>
-          <Chip>Portfolio POC</Chip>
+          <Chip>Inspired by production work</Chip>
         </span>
         <ThemeToggle />
         <button

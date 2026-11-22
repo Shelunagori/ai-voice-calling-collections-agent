@@ -8,7 +8,7 @@ export function SiteFooter() {
         <Chip tone="warn" dot>
           Synthetic identities &amp; accounts only
         </Chip>
-        <Chip>Portfolio proof-of-concept</Chip>
+        <Chip>Inspired by production work</Chip>
         <Chip>Simulated demo policy · not legal advice</Chip>
         <Chip>Not for contacting real debtors</Chip>
       </div>

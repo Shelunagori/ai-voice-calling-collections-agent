@@ -206,12 +206,21 @@ export default function Orb({
     }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setClearColor(0x000000, 0);
-    el.appendChild(renderer.domElement);
-    renderer.domElement.setAttribute("aria-hidden", "true");
+    // The canvas always fills its box exactly. setSize(..., false) below only sizes the drawing buffer
+    // (CSS px × devicePixelRatio); without explicit CSS size a 2x display would show the canvas at twice
+    // its box and spill over neighbouring content. The radial mask fades the halo before the box edge,
+    // so the orb never paints outside its own layout cell.
+    const cv = renderer.domElement;
+    cv.setAttribute("aria-hidden", "true");
+    cv.style.cssText =
+      "display:block;width:100%;height:100%;-webkit-mask-image:radial-gradient(closest-side,#000 78%,transparent 100%);mask-image:radial-gradient(closest-side,#000 78%,transparent 100%)";
+    el.appendChild(cv);
 
     const scene = new Scene();
     const camera = new PerspectiveCamera(34, 1, 0.1, 50);
-    camera.position.set(0, 0, 8.7); // canvas is 1.6× the orb box (see host inset) so shards never hit its edge
+    // The view frames ~4.2 units at the orb's plane: the unit sphere fills ~48% of the box, leaving room inside the
+    // box for the halo, ripples and most of the barge-in shards.
+    camera.position.set(0, 0, 6.87);
 
     const geo = new IcosahedronGeometry(1, 26); // non-indexed: every triangle owns its vertices → can shatter
     const pos = geo.getAttribute("position");
@@ -340,5 +349,5 @@ export default function Orb({
     };
   }, [signal, onReady]);
 
-  return <div ref={host} style={{ position: "absolute", inset: "-30%", pointerEvents: "none" }} />;
+  return <div ref={host} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />;
 }
