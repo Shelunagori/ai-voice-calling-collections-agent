@@ -1,5 +1,7 @@
 // Backend location. NEXT_PUBLIC_API_BASE_URL is inlined at build time and is not a
 // secret: all provider credentials stay on the server.
+import { isTransientStatus, isWaking, whenSettled } from "./backend-wake";
+
 export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 /** WebSocket URL on the *backend* host (never the frontend origin): http->ws, https->wss. */
@@ -12,8 +14,24 @@ export function wsUrl(path: string, base: string = API_BASE): string {
   return `${proto}//${u.host}${prefix}${rel}`;
 }
 
+/**
+ * fetch(), but a request that fails while the shared backend wake-up check is still running (the hosted backend
+ * sleeps when idle) waits for the backend to come up and is retried once. GET only. Otherwise behaves exactly like fetch().
+ */
+async function fetchWakeAware(url: string, init: RequestInit): Promise<Response> {
+  if ((init.method ?? "GET").toUpperCase() !== "GET") return fetch(url, init); // never repeat a write
+  try {
+    const r = await fetch(url, init);
+    if (!isTransientStatus(r.status) || !isWaking()) return r;
+  } catch (e) {
+    if (!isWaking()) throw e;
+  }
+  await whenSettled();
+  return fetch(url, init);
+}
+
 export async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(API_BASE + path, { cache: "no-store", ...init });
+  const r = await fetchWakeAware(API_BASE + path, { cache: "no-store", ...init });
   if (!r.ok) {
     let detail = r.statusText;
     try {

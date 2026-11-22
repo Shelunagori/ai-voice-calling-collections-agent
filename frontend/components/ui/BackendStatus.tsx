@@ -3,6 +3,7 @@
 import { m } from "framer-motion";
 import { useCapabilities } from "@/components/StatusStrip";
 import { API_BASE } from "@/lib/api";
+import { retryWake } from "@/lib/backend-wake";
 import { Chip, StatusChip } from "./Chip";
 import ui from "./ui.module.css";
 
@@ -10,20 +11,23 @@ const isMock = (v: string) => v.startsWith("mock") || v === "fake";
 
 /** Live backend status from /api/capabilities as glowing chips. Mock providers are dashed and say "mock". */
 export function BackendStatus({ align = "center" }: { align?: "center" | "start" }) {
-  const { cap, error } = useCapabilities();
+  const { cap, error, waking } = useCapabilities();
   if (error)
     return (
       <div className={ui.statusRow} data-align={align}>
         <Chip tone="bad" dot title={`${API_BASE}: ${error}`}>
           Backend unreachable
         </Chip>
+        <button type="button" className={ui.chipBtn} onClick={retryWake}>
+          Retry
+        </button>
       </div>
     );
   if (!cap)
     return (
       <div className={ui.statusRow} data-align={align} aria-busy="true">
-        <Chip dot live>
-          Checking backend…
+        <Chip tone={waking ? "warn" : "plain"} dot live title={waking ? "The demo backend sleeps when idle and is starting up." : undefined}>
+          {waking ? "Waking backend… please wait" : "Checking backend…"}
         </Chip>
       </div>
     );

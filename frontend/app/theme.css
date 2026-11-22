@@ -1,6 +1,6 @@
 /*
- * Design tokens for the whole site. Dark-first: <html data-theme="dark"> is the server default and an inline
- * script in the root layout swaps in a saved "light" choice before first paint (no flash).
+ * Design tokens for the whole site. <html data-theme="light"> is the server default and an inline
+ * script in the root layout swaps in a saved "dark" choice before first paint (no flash).
  *
  * This file is unlayered on purpose: the base element rules in globals.css sit in `@layer legacy`, so anything
  * here and in CSS modules wins over them without !important. The "legacy bridge" variables below are the names

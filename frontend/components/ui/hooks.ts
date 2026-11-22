@@ -3,7 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { saveTheme, type Theme } from "./theme-boot";
 
-const readTheme = (): Theme => (document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
+const readTheme = (): Theme => (document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light");
 
 function subscribeTheme(cb: () => void) {
   const mo = new MutationObserver(cb);
@@ -13,7 +13,7 @@ function subscribeTheme(cb: () => void) {
 
 /** Current theme (from <html data-theme>) and a toggle that persists the choice. Server snapshot is the dark default. */
 export function useTheme(): [Theme, () => void] {
-  const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "dark" as Theme);
+  const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as Theme);
   const toggle = useCallback(() => {
     const next: Theme = readTheme() === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);

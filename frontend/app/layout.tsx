@@ -5,6 +5,7 @@ import "./theme.css";
 import { Nav } from "@/components/Nav";
 import { Aurora } from "@/components/ui/Aurora";
 import { SiteFooter } from "@/components/ui/SiteFooter";
+import { WakeNotice } from "@/components/ui/WakeNotice";
 import { THEME_BOOT } from "@/components/ui/theme-boot";
 import ui from "@/components/ui/ui.module.css";
 
@@ -28,9 +29,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // Dark-first. THEME_BOOT runs in <head> before first paint and applies a saved light/dark choice, so the
+    // Light-first. THEME_BOOT runs in <head> before first paint and applies a saved light/dark choice, so the
     // attribute can differ from the server HTML: suppressHydrationWarning covers exactly that.
-    <html lang="en" data-theme="dark" className={`${display.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" data-theme="light" className={`${display.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Nav />
         <div className={ui.page}>{children}</div>
         <SiteFooter />
+        <WakeNotice />
       </body>
     </html>
   );
