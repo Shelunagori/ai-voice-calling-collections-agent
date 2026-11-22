@@ -41,6 +41,13 @@ _ULAW_DECODE = [_ulaw_to_linear(i) for i in range(256)]
 _ULAW_ENCODE = bytes(_linear_to_ulaw(i - 32768) for i in range(65536))
 
 
+def scale_pcm16(pcm: bytes, gain: float) -> bytes:
+    """Multiply PCM16 samples by `gain` (0..1): used to duck agent audio while noise is heard."""
+    a = array("h")
+    a.frombytes(pcm[: len(pcm) // 2 * 2])
+    return array("h", (int(x * gain) for x in a)).tobytes()
+
+
 def pcm16_to_ulaw(pcm: bytes) -> bytes:
     a = array("h")
     a.frombytes(pcm[: len(pcm) // 2 * 2])

@@ -52,8 +52,12 @@ export class LevelMeter {
   }
 }
 
-/** browserDeps() with metering wrappers around the real player and microphone. */
-export function meteredDeps(meter: LevelMeter): ClientDeps {
+/**
+ * browserDeps() with metering wrappers around the real player and microphone.
+ * `holdMic()` returning true withholds microphone frames from the server (still metered locally): the
+ * "Noisy place" option uses it while the agent is talking, so street noise cannot interrupt the agent.
+ */
+export function meteredDeps(meter: LevelMeter, holdMic: () => boolean = () => false): ClientDeps {
   const base = browserDeps();
   return {
     ...base,
@@ -78,7 +82,7 @@ export function meteredDeps(meter: LevelMeter): ClientDeps {
         start: (onFrame) =>
           mic.start((buf) => {
             meter.micFrame(buf);
-            onFrame(buf);
+            if (!holdMic()) onFrame(buf);
           }),
         stop: () => mic.stop(),
       };

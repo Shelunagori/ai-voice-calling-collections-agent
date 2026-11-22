@@ -6,8 +6,12 @@ Owns the audio-in -> audio-out loop for one conversation:
     -> ConversationController.apply (authoritative, under a lock) -> realizer
     -> streaming TTS (paced, generation-tagged) -> transport
 
-Barge-in: while the agent is speaking, sustained caller speech (VAD) or a
-non-filler partial transcript cancels playback. The playback generation counter is
+Barge-in: while the agent is speaking, caller *words* (a non-filler partial or final
+transcript) cancel playback. Voice energy alone (VAD) only ducks the agent's audio while
+a speech recognizer is attached: horns, traffic and nearby talkers are loud but are not
+the caller answering, so they must not cut the agent off. Without a recognizer, sustained
+VAD speech still cancels. If an automatic interruption turns out to be noise (no words),
+the agent repeats what was cut off instead of going silent. The playback generation counter is
 bumped *before* the TTS task is cancelled, so any chunk already in flight is
 dropped, and the transport is told to flush its buffer. Timestamps
 `barge_in_detected_at`, `tts_cancel_requested_at` and `tts_stopped_at` are recorded
@@ -40,6 +44,7 @@ from ..providers.base import (
     TelephonyProvider,
     TTSProvider,
 )
+from .audio import scale_pcm16
 from .latency import TurnLatency
 from .lifecycle import Lifecycle, Transition, VoiceState
 from .turn_detection import EndOfTurnDetector, TurnDecision
@@ -73,6 +78,13 @@ class RuntimeConfig:
     sample_rate: int = 16000
     barge_in_min_speech_ms: int = 250
     barge_in_partial_min_ms: int = 120
+    # With STT attached, energy alone never cuts the agent: it ducks the audio to this gain
+    # until words confirm the barge-in (or the noise stops and the gain is restored).
+    barge_in_require_words: bool = True
+    duck_gain: float = 0.3
+    # After an automatic barge-in that turns out to be noise, repeat the cut-off utterance
+    # if less than this fraction of it was played.
+    resume_below_fraction: float = 0.85
     playback_lead_s: float = 0.25
     silence_timeout_s: float = 8.0
     max_session_s: float = 900.0
@@ -113,6 +125,7 @@ class _Playback:
     interrupted: bool = False
     task: asyncio.Task[None] | None = None
     estimate_s: float = 1.0
+    gain: float = 1.0  # < 1 while ducked for unconfirmed caller-side noise
 
     def played_s(self, now: float) -> float:
         if self.started_at is None:
@@ -122,6 +135,18 @@ class _Playback:
     def fraction(self, now: float) -> float:
         total = self.sent_s if self.synthesis_complete else max(self.sent_s, self.estimate_s)
         return 1.0 if total <= 0 else min(1.0, self.played_s(now) / total)
+
+
+@dataclass
+class _Resume:
+    """An utterance cut off by an automatic barge-in, kept until we know the caller said something."""
+
+    plan: Any
+    text: str
+
+
+# Barge-in sources that are inferred from audio (and can be wrong) rather than explicit caller actions.
+_AUTO_BARGE_SOURCES = {"vad_sustained_speech", "stt_partial"}
 
 
 @dataclass
@@ -184,6 +209,10 @@ class VoiceSession:
         self._first_partial_logged = False
         self._first_final_logged = False
         self._stt_reopens = 0
+        self._speaking_plan: Any = None
+        self._resume: _Resume | None = None
+        self.ducked_noise = 0  # duck episodes that ended without words (suppressed false barge-ins)
+        self.resumed_after_noise = 0
         self._bg: set[asyncio.Task[Any]] = set()
         self.ended = asyncio.Event()
         self.c.audit.subscribe(self._on_audit)
@@ -373,13 +402,38 @@ class VoiceSession:
             and self.vad.speaking
             and self.vad.current_speech_ms >= self.cfg.barge_in_min_speech_ms
         ):
-            await self.barge_in("vad_sustained_speech")
+            if self._words_required():
+                self._duck()
+            else:
+                await self.barge_in("vad_sustained_speech")
+        elif not self.vad.speaking:
+            self._unduck()
+
+    def _words_required(self) -> bool:
+        """Energy alone may not cut the agent when a recognizer can confirm actual words."""
+        return self.cfg.barge_in_require_words and self._stt_stream is not None
+
+    def _duck(self) -> None:
+        pb = self._playback
+        if pb is not None and pb.gain == 1.0:
+            pb.gain = self.cfg.duck_gain
+            self._log("agent_audio_ducked", turn_index=self.c.turn_index, speech_ms=round(self.vad.current_speech_ms))
+
+    def _unduck(self) -> None:
+        pb = self._playback
+        if pb is not None and pb.gain != 1.0:
+            pb.gain = 1.0
+            if self.state == VoiceState.AGENT_SPEAKING:
+                # The noise stopped without the recognizer hearing words: a suppressed false barge-in.
+                self.ducked_noise += 1
+                self._log("barge_in_suppressed_no_words", turn_index=self.c.turn_index)
 
     async def on_text(self, text: str) -> None:
         """Typed turn (browser fallback / evaluation). Treated like a final transcript."""
         text = text.strip()
         if not text or self.lifecycle.terminal:
             return
+        self._resume = None
         now = self._mono()
         if self.state == VoiceState.AGENT_SPEAKING:
             await self.barge_in("typed_input")
@@ -498,6 +552,14 @@ class VoiceSession:
         self._speech_end_at = None
 
     async def _on_speech_end(self, at: float) -> None:
+        if self.state == VoiceState.AGENT_SPEAKING and self._playback is not None and self._playback.gain != 1.0:
+            # Ducked speech ended: ask for the final now, so a short answer ("no") is confirmed promptly.
+            if self._stt_stream is not None:
+                try:
+                    await self._stt_stream.finalize()
+                except ProviderError as e:
+                    self._provider_failure("stt", e)
+            return
         if self.state in (VoiceState.USER_SPEAKING, VoiceState.INTERRUPTED):
             self._speech_end_at = at
             if self._stt_stream is not None:
@@ -521,6 +583,30 @@ class VoiceSession:
             self.emit("turn.discarded", {"reason": "no_words", "silence_ms": round(silence_ms)})
             self._reset_turn()
             self.lifecycle.to(VoiceState.LISTENING, "noise_discarded")
+            if self._resume is not None and self._accepting_turns():
+                self._start_resume()
+
+    def _start_resume(self) -> None:
+        """The agent was cut off by noise: say the interrupted utterance again instead of going silent."""
+        r, self._resume = self._resume, None
+        assert r is not None
+        now = self._mono()
+        lat = TurnLatency(self.c.turn_index, "resume")
+        lat.mark("turn_commit", now)
+        self.lifecycle.to(VoiceState.PROCESSING, "resume_after_noise")
+        self._applied = True  # nothing to interpret: caller speech now must not cancel it as a merged turn
+        self.resumed_after_noise += 1
+        self._log("resume_after_noise", turn_index=self.c.turn_index)
+        prefix = "失礼しました。改めて申し上げます。" if self.c.lang.value == "ja" else "Sorry, as I was saying: "
+        self._process_task = asyncio.create_task(self._resume_speech(r.plan, prefix + r.text, lat))
+
+    async def _resume_speech(self, plan: Any, text: str, lat: TurnLatency) -> None:
+        interrupted = await self._deliver(plan, text, "resume_after_noise", lat)
+        if not interrupted and self.state == VoiceState.AGENT_SPEAKING:
+            self.lifecycle.to(VoiceState.LISTENING, "agent_finished")
+        if self._pending_text:
+            pending, self._pending_text = self._pending_text, None
+            await self.on_text(pending)
 
     def _reset_turn(self) -> None:
         self._turn_text = []
@@ -533,6 +619,7 @@ class VoiceSession:
         return not (self.lifecycle.terminal or self.state == VoiceState.TRANSFER_REQUESTED or self.c.state.ended)
 
     def _commit_turn(self, text: str, mode: str, speech_end: float | None, final_at: float | None) -> None:
+        self._resume = None  # the caller said something: answer that, do not repeat the old line
         if not self._accepting_turns():
             self._reset_turn()
             return
@@ -621,66 +708,9 @@ class VoiceSession:
             self.c.audit.record(
                 AuditType.RESPONSE_GUARD_BLOCKED, self.c.turn_index, violations=real.guard_violations, error=real.error
             )
-        self.c.last_agent_text = real.text
-        agent_turn = Turn(len(self.turns), "agent", real.text, self.d.controller.clock.now())
-        agent_turn.intent = ",".join(a.value for a in outcome.plan.acts)
-        self.turns.append(agent_turn)
         if Effect.SEND_PTP_CONFIRMATION in outcome.effects:
             self._spawn(self._send_ptp_confirmation())
-
-        self.emit(
-            "agent.speaking",
-            {"index": agent_turn.index, "text": real.text, "acts": agent_turn.intent, "realizer": real.source},
-        )
-        try:
-            interrupted, fraction = await self._speak(real.text, lat)
-        except asyncio.CancelledError:
-            # Session ended mid-utterance: keep the transcript/audit complete.
-            agent_turn.interrupted = True
-            agent_turn.spoken_text = ""
-            self.emit(
-                "turn.agent",
-                {
-                    "index": agent_turn.index,
-                    "text": real.text,
-                    "acts": agent_turn.intent,
-                    "interrupted": True,
-                    "spoken_text": None,
-                    "realizer": real.source,
-                    "turn_index": self.c.turn_index,
-                    "cut_by": "session_end",
-                },
-            )
-            raise
-        agent_turn.interrupted = interrupted
-        if interrupted:
-            words = real.text.split(" ") if " " in real.text else list(real.text)
-            k = int(len(words) * fraction)
-            agent_turn.spoken_text = (" " if " " in real.text else "").join(words[:k])
-        self.c.mark_delivered(outcome.plan, fraction)
-        self.latencies.append(lat)
-        self.emit(
-            "turn.agent",
-            {
-                "index": agent_turn.index,
-                "text": real.text,
-                "acts": agent_turn.intent,
-                "interrupted": interrupted,
-                "spoken_text": agent_turn.spoken_text,
-                "realizer": real.source,
-                "turn_index": self.c.turn_index,
-            },
-        )
-        self.emit(
-            "latency",
-            {
-                "turn_index": lat.turn_index,
-                "input_mode": lat.input_mode,
-                "stages": lat.stages_ms(),
-                "providers": self.d.provider_labels,
-            },
-        )
-        self._emit_state()
+        interrupted = await self._deliver(outcome.plan, real.text, real.source, lat)
 
         # Caller-rights effects execute even if the utterance was interrupted.
         if Effect.TRANSFER in outcome.effects:
@@ -694,6 +724,70 @@ class VoiceSession:
         if self._pending_text:
             text, self._pending_text = self._pending_text, None
             await self.on_text(text)
+
+    async def _deliver(self, plan: Any, text: str, source: str, lat: TurnLatency) -> bool:
+        """Speak one agent utterance and record it (transcript turn, delivery, latency). Returns interrupted."""
+        self.c.last_agent_text = text
+        agent_turn = Turn(len(self.turns), "agent", text, self.d.controller.clock.now())
+        agent_turn.intent = ",".join(a.value for a in plan.acts)
+        self.turns.append(agent_turn)
+
+        self.emit(
+            "agent.speaking",
+            {"index": agent_turn.index, "text": text, "acts": agent_turn.intent, "realizer": source},
+        )
+        self._speaking_plan = plan
+        try:
+            interrupted, fraction = await self._speak(text, lat)
+        except asyncio.CancelledError:
+            # Session ended mid-utterance: keep the transcript/audit complete.
+            agent_turn.interrupted = True
+            agent_turn.spoken_text = ""
+            self.emit(
+                "turn.agent",
+                {
+                    "index": agent_turn.index,
+                    "text": text,
+                    "acts": agent_turn.intent,
+                    "interrupted": True,
+                    "spoken_text": None,
+                    "realizer": source,
+                    "turn_index": self.c.turn_index,
+                    "cut_by": "session_end",
+                },
+            )
+            raise
+        agent_turn.interrupted = interrupted
+        if interrupted:
+            words = text.split(" ") if " " in text else list(text)
+            k = int(len(words) * fraction)
+            agent_turn.spoken_text = (" " if " " in text else "").join(words[:k])
+        self.c.mark_delivered(plan, fraction)
+        if lat.input_mode != "resume":
+            self.latencies.append(lat)  # a repeated line is not a response-latency sample
+        self.emit(
+            "turn.agent",
+            {
+                "index": agent_turn.index,
+                "text": text,
+                "acts": agent_turn.intent,
+                "interrupted": interrupted,
+                "spoken_text": agent_turn.spoken_text,
+                "realizer": source,
+                "turn_index": self.c.turn_index,
+            },
+        )
+        self.emit(
+            "latency",
+            {
+                "turn_index": lat.turn_index,
+                "input_mode": lat.input_mode,
+                "stages": lat.stages_ms(),
+                "providers": self.d.provider_labels,
+            },
+        )
+        self._emit_state()
+        return interrupted
 
     async def _speak(self, text: str, lat: TurnLatency) -> tuple[bool, float]:
         self.gen += 1
@@ -739,7 +833,8 @@ class VoiceSession:
                     await self.d.sleep(ahead - self.cfg.playback_lead_s)
                     if pb.generation != self.gen:
                         return
-                await self.transport.send_audio(chunk, pb.generation)
+                out = chunk if pb.gain == 1.0 else scale_pcm16(chunk, pb.gain)
+                await self.transport.send_audio(out, pb.generation)
                 lat.mark("first_audio_sent", self._mono())
                 pb.sent_s += len(chunk) / 2 / sr
         pb.synthesis_complete = True
@@ -753,6 +848,11 @@ class VoiceSession:
         if self.state != VoiceState.AGENT_SPEAKING or pb is None or pb.task is None or pb.task.done():
             return
         detected = self._mono()
+        self._resume = (
+            _Resume(self._speaking_plan, pb.text)
+            if source in _AUTO_BARGE_SOURCES and pb.fraction(detected) < self.cfg.resume_below_fraction
+            else None
+        )
         self.lifecycle.to(VoiceState.INTERRUPTED, source)
         pb.interrupted = True
         # Invalidate first, then cancel: anything already in flight is dropped.

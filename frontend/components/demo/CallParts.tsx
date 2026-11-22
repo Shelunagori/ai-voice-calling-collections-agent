@@ -21,6 +21,9 @@ import {
 } from "@/lib/session";
 import d from "./demo.module.css";
 
+// Readable tags for non-default realizer sources shown on agent turns.
+const REALIZER_LABEL: Record<string, string> = { resume_after_noise: "repeated after noise" };
+
 type Lang = "en" | "ja";
 export type RawBargeIn = BargeIn & { barge_in_detected_at?: number };
 
@@ -107,7 +110,7 @@ export function LiveTranscript({
               <div className={d.who}>
                 <i />
                 {t.speaker === "agent" ? "Agent" : "Caller"}
-                {t.speaker === "agent" && t.realizer && t.realizer !== "template" && <span className={d.lat}>{t.realizer}</span>}
+                {t.speaker === "agent" && t.realizer && t.realizer !== "template" && <span className={d.lat}>{REALIZER_LABEL[t.realizer] ?? t.realizer}</span>}
               </div>
               <div className={cx(d.bubble, cut && d.bubbleCut)}>
                 <Words text={spoken} animate={t.speaker === "agent"} />

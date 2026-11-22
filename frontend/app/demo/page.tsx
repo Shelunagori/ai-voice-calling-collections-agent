@@ -31,13 +31,16 @@ const BARGE_HOLD_MS = 650;
 const isMock = (v: string) => v.startsWith("mock") || v === "fake";
 
 export default function DemoPage() {
-  const { cap, error: capError } = useCapabilities();
+  const { cap, error: capError, waking } = useCapabilities();
   const reduced = usePrefersReducedMotion();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [scenarioKey, setScenarioKey] = useState("A");
   const [lang, setLang] = useState<Lang>("en");
   const [modeChoice, setMode] = useState<"auto" | "text" | "voice">("auto");
   const [speakMock, setSpeakMock] = useState(true);
+  // "Noisy place": withhold the mic while the agent talks (read from a ref inside the mic callback).
+  const [noisyPlace, setNoisyPlace] = useState(false);
+  const holdMic$ = useRef({ noisy: false, agentSpeaking: false });
   const [draft, setDraft] = useState("");
   const [state, dispatch] = useReducer(reduce, initialState);
   const manager = useRef<SessionManager | null>(null);
@@ -66,7 +69,7 @@ export default function DemoPage() {
 
   const getManager = useCallback(() => {
     if (!meter.current) meter.current = new LevelMeter();
-    if (!manager.current) manager.current = new SessionManager(meteredDeps(meter.current));
+    if (!manager.current) manager.current = new SessionManager(meteredDeps(meter.current, () => holdMic$.current.noisy && holdMic$.current.agentSpeaking));
     return manager.current;
   }, []);
 
@@ -107,6 +110,9 @@ export default function DemoPage() {
   useEffect(() => {
     live$.current = { voiceState: state.voiceState, inCall, voice: inputMode === "voice", bargeAt };
   }, [state.voiceState, inCall, inputMode, bargeAt]);
+  useEffect(() => {
+    holdMic$.current = { noisy: noisyPlace, agentSpeaking: state.voiceState === "AGENT_SPEAKING" };
+  }, [noisyPlace, state.voiceState]);
   const signal = useRef<() => OrbSignal>(() => ({ state: "IDLE", amp: 0 }));
   useEffect(() => {
     signal.current = () => {
@@ -240,7 +246,7 @@ export default function DemoPage() {
               <AnimatePresence mode="wait">
                 {!inCall ? (
                   <m.div key="idle" className={d.idleState} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                    <StateIndicator state={capError ? "ERROR" : "IDLE"} label={capError ? "Backend offline" : cap ? "Ready" : "Connecting to backend"} />
+                    <StateIndicator state={capError ? "ERROR" : "IDLE"} label={capError ? "Backend offline" : cap ? "Ready" : waking ? "Waking backend" : "Connecting to backend"} />
                     <SetupHead />
                   </m.div>
                 ) : (
@@ -288,6 +294,8 @@ export default function DemoPage() {
                   mockTts={mockTts}
                   speakMock={speakMock}
                   onSpeakMock={setSpeakMock}
+                  noisyPlace={noisyPlace}
+                  onNoisyPlace={setNoisyPlace}
                   connecting={state.status === "connecting"}
                   onStart={() => void start()}
                 />

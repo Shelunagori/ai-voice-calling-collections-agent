@@ -47,6 +47,8 @@ export function Setup({
   mockTts,
   speakMock,
   onSpeakMock,
+  noisyPlace,
+  onNoisyPlace,
   connecting,
   onStart,
 }: {
@@ -62,6 +64,8 @@ export function Setup({
   mockTts: boolean;
   speakMock: boolean;
   onSpeakMock: (v: boolean) => void;
+  noisyPlace: boolean;
+  onNoisyPlace: (v: boolean) => void;
   connecting: boolean;
   onStart: () => void;
 }) {
@@ -156,6 +160,14 @@ export function Setup({
           </dl>
         )}
 
+        {mode === "voice" && cap?.browser_voice_available && (
+          <label className={d.check2}>
+            <input type="checkbox" checked={noisyPlace} onChange={(e) => onNoisyPlace(e.target.checked)} />
+            <span>
+              Noisy place: mute my microphone while the agent is talking, so traffic or people nearby can&apos;t interrupt it. Use <b>Interrupt agent</b> to cut in.
+            </span>
+          </label>
+        )}
         {mockTts && (
           <label className={d.check2}>
             <input type="checkbox" checked={speakMock} onChange={(e) => onSpeakMock(e.target.checked)} />
