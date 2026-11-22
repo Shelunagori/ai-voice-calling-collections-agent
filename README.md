@@ -6,7 +6,11 @@ within deterministic policy constraints, handles interruptions, and produces a f
 **Live demo:** https://ai-voice-calling-collections-agent.vercel.app ·
 **Telephony (Start Call):** https://ai-voice-calling-collections-agent.vercel.app/telephony ·
 **Sessions & audit:** https://ai-voice-calling-collections-agent.vercel.app/sessions ·
-**Backend health:** https://ai-voice-calling-collections-agent-production.up.railway.app/ready
+**Backend API:** https://ai-voice-calling-collections-agent.onrender.com ·
+**Backend health:** https://ai-voice-calling-collections-agent.onrender.com/ready
+
+> The backend runs on a Render instance that sleeps when idle. The first request after a quiet period can take
+> ~30–60 s while it starts; the site shows a "Waking up the backend…" notice and fills in by itself once it answers.
 
 ![Demo: Japanese browser session (identity, barge-in, promise) and a real PSTN call's audit trail](docs/demo.gif)
 
@@ -28,7 +32,7 @@ within deterministic policy constraints, handles interruptions, and produces a f
 
 ## Core capabilities
 
-**Live on the deployed stack** (Vercel + Railway, real providers):
+**Live on the deployed stack** (Vercel + Render, real providers):
 
 | Capability | Where |
 |---|---|
@@ -63,7 +67,7 @@ within deterministic policy constraints, handles interruptions, and produces a f
 ```mermaid
 flowchart TD
     R[Operator / reviewer browser] --> V[Next.js on Vercel<br/>server routes hold OPERATOR_TOKEN]
-    V --> B[FastAPI on Railway]
+    V --> B[FastAPI on Render]
     B --> C[Deterministic controller + policy engine]
     B -->|Twilio REST| T[Outbound PSTN call]
     T <-->|Media Streams| B
@@ -218,7 +222,7 @@ Synthetic identities and DOBs are shown on each scenario card. Walkthrough:
   - Two Next.js route handlers add it for phone-session detail and Start Call.
   - The browser never sends, receives or stores it.
   - A CI step builds with a canary token and scans the client bundle.
-- **Railway stays authenticated.** `/api/operator/calls` and phone-session detail reject requests without
+- **The backend stays authenticated.** `/api/operator/calls` and phone-session detail reject requests without
   the bearer token.
 - **Start Call guards:**
   - same-origin JSON only;
@@ -243,8 +247,13 @@ Synthetic identities and DOBs are shown on each scenario card. Walkthrough:
 - Latency is not consistently below 1.5 s (median 1.62 s over 31 PSTN turns). These are a few calls, not a
   benchmark.
 - Model and provider choices are tuned for POC cost and speed.
-- Voice activity detection is a simple energy VAD. Background noise in the browser can trigger or delay
-  barge-in and turn-taking; headphones help.
+- Voice activity detection is a simple energy VAD. Loud background noise alone no longer interrupts the agent:
+  it only lowers the agent's volume until the speech recognizer hears actual words, and if an interruption
+  turns out to be noise the agent repeats what it was saying. Nearby people talking can still produce words
+  that interrupt it; the demo's "Noisy place" option mutes the microphone while the agent talks (use
+  Interrupt to cut in). Headphones still help.
+- The backend host sleeps when idle, so the first request after a quiet period is slow (cold start). The UI
+  says so instead of failing; Start Call can still time out if clicked mid-wake-up.
 - Demo rate limits and the allowlist are intentionally restrictive; the in-process session state requires a
   single replica.
 - Japanese has not been reviewed by a native speaker. Post-training covers the interpreter only, on
@@ -290,10 +299,10 @@ Checks:
 Every variable is documented in [.env.example](.env.example); step-by-step in
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/TELEPHONY.md](docs/TELEPHONY.md).
 
-**Backend (Railway)**
+**Backend (Render)**
 
 - `APP_ENV=production`, `FRONTEND_URL` set to the exact Vercel origin, and
-  `DATABASE_URL=${{Postgres.DATABASE_URL}}` from a Railway PostgreSQL service.
+  `DATABASE_URL` pointing at a managed PostgreSQL database.
 - **Durable persistence:** the backend uses PostgreSQL for sessions, transcripts, audit, latency,
   promises and stop-contact suppression, so they survive redeploys. The SQLite fallback is development-only.
   Production/staging refuse to start without PostgreSQL; `ALLOW_EPHEMERAL_DATABASE` is an emergency override,
@@ -309,8 +318,8 @@ Every variable is documented in [.env.example](.env.example); step-by-step in
 
 **Frontend (Vercel)**
 
-- `NEXT_PUBLIC_API_BASE_URL` (public; the backend URL).
-- `OPERATOR_TOKEN` (server-only; same value as Railway, never `NEXT_PUBLIC_`).
+- `NEXT_PUBLIC_API_BASE_URL` (public; the backend URL, `https://ai-voice-calling-collections-agent.onrender.com`).
+- `OPERATOR_TOKEN` (server-only; same value as the backend, never `NEXT_PUBLIC_`).
 - Optionally `BACKEND_API_BASE_URL`.
 
 **Twilio**
