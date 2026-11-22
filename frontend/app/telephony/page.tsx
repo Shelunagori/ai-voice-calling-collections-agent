@@ -50,7 +50,9 @@ function Decisions({ items }: { items: PolicyDecision[] }) {
     <ul className={t$.decisions} data-testid="policy-decisions">
       {items.map((d) => (
         <li key={d.rule} data-decision={d.decision}>
-          <Chip tone={d.decision === "BLOCK" ? "bad" : d.decision === "ALLOW" ? "ok" : "plain"}>{d.decision}</Chip>
+          <Chip tone={d.decision === "BLOCK" ? "bad" : d.decision === "ALLOW" ? "ok" : "plain"} title={d.decision}>
+            {d.decision === "NOT_APPLICABLE" ? "N/A" : d.decision}
+          </Chip>
           <span>
             <b title={d.rule}>{RULE_LABELS[d.rule] ?? d.rule}</b>
             <em>{d.reason}</em>
