@@ -1,3 +1,9 @@
+/*
+ * Original stylesheet, kept verbatim inside a cascade layer. Layered rules lose to unlayered ones, so app/theme.css
+ * and the CSS modules of migrated components override these without !important. Remove a rule here once no page
+ * uses its class any more.
+ */
+@layer legacy {
 :root {
   --bg: #f6f7f9;
   --panel: #ffffff;
@@ -161,3 +167,4 @@ svg text { fill: var(--text); }
 .diagram .edge { stroke: var(--muted); fill: none; marker-end: url(#arrow); }
 .diagram .lbl { font-size: 12px; }
 .diagram .sub { font-size: 10.5px; fill: var(--muted); }
+}

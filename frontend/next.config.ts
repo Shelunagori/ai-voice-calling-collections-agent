@@ -4,6 +4,8 @@ const config: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  // Don't auto-write AGENTS.md / CLAUDE.md into the repo on `next dev`.
+  agentRules: false,
   async redirects() {
     return [{ source: "/operator", destination: "/telephony", permanent: false }];
   },
