@@ -97,7 +97,9 @@ async def start_call(body: CallRequest, request: Request, state: AppState = Depe
         raise HTTPException(409, "telephony disabled: set TELEPHONY_ENABLED=true and Twilio credentials")
     if not state.limiter.allow("call", client_ip(request), s.rate_limit_calls_per_hour, 3600):
         raise HTTPException(429, "call rate limit reached")
-    if not E164.match(body.to) or body.to not in s.allowed_call_numbers:
+    if not E164.match(body.to):
+        raise HTTPException(403, "destination is not a valid E.164 number")
+    if not s.demo_call_allow_any_number and body.to not in s.allowed_call_numbers:
         raise HTTPException(403, "destination is not on DEMO_CALL_ALLOWED_NUMBERS")
     key = body.scenario.upper()
     if key not in SCENARIOS:

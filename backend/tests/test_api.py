@@ -225,6 +225,43 @@ def test_outbound_call_guardrails(tclient):
     assert r.json()["status"] == "blocked_by_policy" and len(tclient.tel.calls) == n
 
 
+def test_allow_any_number_skips_allowlist_but_keeps_other_guards(tmp_path):
+    tel = FakeTelephony(auth_token="tw-test-token")
+    tel.live = True
+    s = settings_for_tests(
+        operator_token="op-secret",
+        telephony_enabled=True,
+        twilio_account_sid="ACtest",
+        twilio_auth_token="tw-test-token",
+        twilio_phone_number="+15550001111",
+        twilio_webhook_base_url=TW_BASE,
+        demo_call_allowed_numbers="",
+        demo_call_allow_any_number=True,
+        database_url=db_url(tmp_path),
+    )
+    clock = FakeClock(datetime(2026, 10, 1, 1, 0, tzinfo=UTC))  # 10:00 JST
+    app = create_app(s, providers=fast_providers(tel), policy_clock=clock)
+    h = {"Authorization": "Bearer op-secret"}
+    with TestClient(app) as c:
+        assert c.get("/api/capabilities").json()["telephony"]["allow_any_number"] is True
+        r = c.post("/api/operator/calls", json={"to": "+919876543210", "scenario": "A"}, headers=h)
+        assert r.json()["status"] == "dialing" and tel.calls[-1]["to"] == "+919876543210"
+        # still: E.164 only, operator token required, contact policy applies
+        assert c.post("/api/operator/calls", json={"to": "9876543210"}, headers=h).status_code == 403
+        assert c.post("/api/operator/calls", json={"to": "+919876543210"}).status_code == 401
+        clock.set(datetime(2026, 10, 1, 14, 0, tzinfo=UTC))  # 23:00 JST
+        n = len(tel.calls)
+        r = c.post("/api/operator/calls", json={"to": "+919876543210", "scenario": "B"}, headers=h)
+        assert r.json()["status"] == "blocked_by_policy" and len(tel.calls) == n
+
+
+def test_allowlist_enforced_by_default(tclient):
+    assert tclient.get("/api/capabilities").json()["telephony"]["allow_any_number"] is False
+    h = {"Authorization": "Bearer op-secret"}
+    r = tclient.post("/api/operator/calls", json={"to": "+919876543210"}, headers=h)
+    assert r.status_code == 403 and "DEMO_CALL_ALLOWED_NUMBERS" in r.json()["detail"]
+
+
 def test_outbound_call_endpoint_rejects_missing_or_wrong_token(tclient):
     """The Vercel proxy adds the token server-side; the Railway endpoint itself stays protected."""
     body = {"to": "+819012345678", "scenario": "A", "language": "en"}

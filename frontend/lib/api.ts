@@ -58,6 +58,7 @@ export type Capabilities = {
     active: boolean;
     operator_endpoints: boolean;
     allowed_numbers_configured: number;
+    allow_any_number?: boolean;
     transfer_number_configured: boolean;
   };
   languages: string[];

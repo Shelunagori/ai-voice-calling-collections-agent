@@ -113,6 +113,7 @@ async def capabilities(state: AppState = Depends(get_state)) -> dict[str, Any]:
             "active": s.telephony_active,
             "operator_endpoints": bool(s.operator_token),
             "allowed_numbers_configured": len(s.allowed_call_numbers),
+            "allow_any_number": s.demo_call_allow_any_number,
             "transfer_number_configured": bool(s.twilio_transfer_number),
         },
         "languages": ["en", "ja"],

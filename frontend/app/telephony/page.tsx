@@ -191,7 +191,7 @@ export default function TelephonyPage() {
           <div className={ui.statusRow} style={{ justifyContent: "center" }} aria-label="Telephony status">
             <StatusChip label="Telephony" value={t ? (t.active ? "active" : "disabled") : "…"} tone={t?.active ? "ok" : "plain"} live={!!t?.active} />
             <StatusChip label="Operator endpoints" value={t ? (t.operator_endpoints ? "enabled" : "disabled") : "—"} tone={t?.operator_endpoints ? "ok" : "plain"} />
-            <StatusChip label="Allow-listed numbers" value={String(t?.allowed_numbers_configured ?? 0)} />
+            <StatusChip label="Allow-listed numbers" value={t?.allow_any_number ? "any (demo mode)" : String(t?.allowed_numbers_configured ?? 0)} tone={t?.allow_any_number ? "mock" : "plain"} />
             <StatusChip label="Transfer number" value={t?.transfer_number_configured ? "configured" : "simulated"} tone={t?.transfer_number_configured ? "ok" : "mock"} />
           </div>
         </m.header>
@@ -203,7 +203,11 @@ export default function TelephonyPage() {
               <span>Destination (E.164)</span>
               <input className={t$.input} type="tel" placeholder="+819012345678" value={to} onChange={(e) => setTo(e.target.value)} autoComplete="off" inputMode="tel" />
             </label>
-            <p className={ui.fine}>Only allowlisted demo numbers can be dialed{t ? ` (${t.allowed_numbers_configured} configured on the backend)` : ""}.</p>
+            <p className={ui.fine}>
+              {t?.allow_any_number
+                ? "Demo mode: any number can be dialed (a Twilio trial account still only reaches Verified Caller IDs)."
+                : `Only allowlisted demo numbers can be dialed${t ? ` (${t.allowed_numbers_configured} configured on the backend)` : ""}.`}
+            </p>
             {to && !normalised && (
               <p className={t$.invalid} role="alert">
                 Enter the number in E.164 format, e.g. +819012345678.

@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     twilio_webhook_base_url: str = ""
     twilio_transfer_number: str = ""
     demo_call_allowed_numbers: str = ""
+    # Demo-day switch: skip DEMO_CALL_ALLOWED_NUMBERS and dial any valid E.164 number. Contact
+    # policy, rate limits and the operator token still apply. On a Twilio *trial* account Twilio
+    # itself still only dials Verified Caller IDs; on a paid account this means any number, so
+    # keep it off except while demoing.
+    demo_call_allow_any_number: bool = False
     operator_token: str = ""
     validate_twilio_signatures: bool = True
 
