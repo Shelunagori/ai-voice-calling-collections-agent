@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/demo", label: "Voice demo" },
   { href: "/architecture", label: "Architecture" },
   { href: "/evaluation", label: "Evaluation" },
+  { href: "/model-training", label: "Model training" },
   { href: "/sessions", label: "Sessions & audit" },
   { href: "/telephony", label: "Telephony" },
 ];
